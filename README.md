@@ -36,6 +36,10 @@ npm run build:client  # 重新打包设置页 client bundle
 npm test              # 合约测试（含真实子进程端到端：clone/push/UM 凭据）
 ```
 
+### 依赖自动处理
+
+`dsh plugin add` 对 `link:` 方式的插件不安装依赖；从 npm 安装时 pnpm 默认也会拦截 better-sqlite3 的构建脚本。本插件对此自愈：**每次启动前自检关键运行时依赖（better-sqlite3/ssh2/marked/ini/busboy/qrcode），缺失时自动在插件目录执行 `npm install --omit=dev`**（npm 默认执行安装脚本，better-sqlite3 直接取预编译产物），失败 30 秒后自动重试，状态里 `deps` 字段反映进度（ok / installing / failed）。也就是说：git clone 本仓库后直接 `dsh plugin add` 即可，无需手动 `npm install`。
+
 注意：`vendor/ts-gogs` 的运行时依赖（better-sqlite3/ssh2 等）由本包的 `dependencies` 提供，`npm install` 时编译。
 
 ## 与 user-management 的密码兼容

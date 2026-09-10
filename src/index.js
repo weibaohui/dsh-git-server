@@ -118,7 +118,7 @@ module.exports = {
     let memoryPatch = {}
     let pwFileCache = null
 
-    const state = { handle: null, fingerprint: '', error: null, restarting: 0 }
+    const state = { handle: null, fingerprint: '', error: null, restarting: 0, deps: 'ok' }
 
     const warnThrottledAt = new Map()
     function warnThrottled(key, line, ttlMs = 60000) {
@@ -206,6 +206,7 @@ module.exports = {
         adminUser: 'root',
         adminPassword: cfg.adminPassword || readPasswordFile(),
         crashes: state.restarting,
+        deps: state.deps,
       }
     }
 
@@ -220,6 +221,7 @@ module.exports = {
     /** 配置协调器：指纹变化才重启子进程；enabled=false 则停机。 */
     async function reconcile() {
       const cfg = engine.normalizeConfig(effective())
+      if (state.retryAt && Date.now() < state.retryAt) return status()
       await ensureAdminPassword(cfg)
       const fp = engine.serverFingerprint(cfg)
       if (fp === state.fingerprint) return status()
@@ -235,6 +237,9 @@ module.exports = {
       state.fingerprint = fp // 先记账防并发重建；失败时错误落在 state.error
       if (state.handle) { await state.handle.stop(); state.handle = null }
       try {
+        // 依赖自检/自动安装的日志始终可见；子进程自身输出仅在 verbose 模式转发
+        await engine.ensureDeps({ logger: (line) => logger.info(`dsh-git-server: ${line}`) })
+        state.deps = 'ok'
         const handle = await engine.start(cfg, {
           logger: (line) => { if (process.env.DSH_GIT_SERVER_VERBOSE) logger.info(`dsh-git-server: ${line}`) },
         })
@@ -252,8 +257,20 @@ module.exports = {
             `auth=${cfg.authMode === 'user-management' ? 'user-management' : 'gogs'} dataDir=${cfg.dataDir}`,
         )
       } catch (e) {
-        state.error = String((e && e.message) || e)
-        logger.error('dsh-git-server: ' + state.error)
+        const msg = String((e && e.message) || e)
+        // 失败后清指纹 + 30s 退避，让心跳自动重试（in-flight 去重防并发装）
+        state.handle = null
+        state.fingerprint = ''
+        state.retryAt = Date.now() + 30000
+        if (/依赖自动安装/.test(msg)) {
+          state.deps = 'failed'
+          state.error = msg
+          logger.warn('dsh-git-server: ' + msg + '（30s 后自动重试）')
+        } else {
+          state.deps = 'ok'
+          state.error = msg
+          logger.error('dsh-git-server: ' + msg)
+        }
       }
       return status()
     }

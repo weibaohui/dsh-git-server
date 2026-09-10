@@ -154,12 +154,61 @@ function writeAppIni(cfg) {
   return file
 }
 
+let depsInstallInFlight = null
+
+/**
+ * 依赖自检 + 自动安装。`dsh plugin add` 对 link: 包不装依赖、pnpm 默认
+ * 还会拦 better-sqlite3 的构建脚本，所以启动前自检关键原生依赖，缺失就在
+ * 插件目录自动跑一次 `npm install --omit=dev`（npm 默认执行安装脚本，
+ * better-sqlite3 拿预编译产物）。幂等：并发调用共享同一 in-flight。
+ */
+function ensureDeps({ logger = () => {} } = {}) {
+  let probe
+  try {
+    const { createRequire } = require('node:module')
+    probe = createRequire(path.join(VENDOR_DIR, 'dist', 'index.js'))
+  } catch {}
+  const critical = ['better-sqlite3', 'ssh2', 'marked', 'ini', 'busboy', 'qrcode']
+  const missing = []
+  for (const name of critical) {
+    try { probe && probe.resolve(name) } catch { missing.push(name) }
+  }
+  if (!missing.length) return { installed: false, missing: [] }
+  if (depsInstallInFlight) return depsInstallInFlight
+  logger(`检测到缺失依赖 ${missing.join(', ')}，自动执行 npm install（首次可能需要 1-2 分钟）…`)
+  depsInstallInFlight = new Promise((resolve, reject) => {
+    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+    const child = spawn(npm, ['install', '--omit=dev', '--no-audit', '--no-fund'], {
+      cwd: path.join(VENDOR_DIR, '..', '..'),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let tail = ''
+    const collect = (d) => { tail = (tail + d.toString()).slice(-2000); logger(`[npm] ${d.toString().trimEnd()}`) }
+    child.stdout.on('data', collect)
+    child.stderr.on('data', collect)
+    const killer = setTimeout(() => child.kill('SIGKILL'), 300000)
+    child.once('exit', (code) => {
+      clearTimeout(killer)
+      depsInstallInFlight = null
+      // 装完复检
+      const still = []
+      for (const name of critical) {
+        try { probe && probe.resolve(name) } catch { still.push(name) }
+      }
+      if (code === 0 && !still.length) resolve({ installed: true, missing: [] })
+      else reject(new Error(`依赖自动安装失败（exit=${code}${still.length ? '，仍缺: ' + still.join(',') : ''}）\n${tail.slice(-600)}`))
+    })
+  })
+  return depsInstallInFlight
+}
+
 /**
  * 启动 ts-gogs 子进程。返回句柄 { pid, stop() }。
  * 就绪前抛错（带 stderr 尾部）；就绪判定 = GET / 返回任意状态（TS 服务
  * 起来后即使 404/302 也代表监听器在线）。
  */
 async function start(cfg, { logger = () => {}, onExit } = {}) {
+  await ensureDeps({ logger })
   const appIni = writeAppIni(cfg)
   const entry = path.join(VENDOR_DIR, 'dist', 'index.js')
   if (!fs.existsSync(entry)) throw new Error(`vendor/ts-gogs 构建产物缺失: ${entry}`)
@@ -231,6 +280,7 @@ function umUsersFilePath() {
 }
 
 module.exports = {
+  ensureDeps,
   umUsersFilePath,
   PLUGIN_ID,
   DEFAULTS,

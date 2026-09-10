@@ -1,0 +1,38 @@
+{
+  "name": "ts-gogs",
+  "version": "0.1.0",
+  "description": "A faithful TypeScript port of Gogs (https://gogs.io) — API and web UI drop-in compatible.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "check": "tsc --noEmit",
+    "test": "bash test/run-all.sh",
+    "test:api": "node test/api-test.mjs",
+    "test:git": "node test/git-test.mjs",
+    "test:ui": "node test/ui-test.mjs",
+    "test:drill": "node test/scenario-dev.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@types/qrcode": "^1.5.6",
+    "better-sqlite3": "^11.10.0",
+    "busboy": "^1.6.0",
+    "ini": "^5.0.0",
+    "marked": "^15.0.0",
+    "qrcode": "^1.5.4",
+    "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/busboy": "^1.5.4",
+    "@types/ini": "^4.1.1",
+    "@types/node": "^22.10.0",
+    "@types/ssh2": "^1.15.6",
+    "playwright-core": "^1.60.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "name": "@weibaohui/dsh-git-server",
+  "version": "0.1.0",
+  "description": "dsh 插件 · Git 服务器：内嵌 ts-gogs（Gogs 的 TypeScript 平替），独立端口跑完整 Git 服务（HTTP clone/push、网页端、issue/PR/wiki），可复用 user-management 的用户名密码，设置页一键启停。",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/weibaohui/dsh-git-server.git"
+  },
+  "homepage": "https://github.com/weibaohui/dsh-git-server#readme",
+  "bugs": {
+    "url": "https://github.com/weibaohui/dsh-git-server/issues"
+  },
+  "license": "MIT",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./client/bundle.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "client",
+    "scripts",
+    "vendor/ts-gogs",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "check": "node --check src/index.js && node --check src/runner.js && node --check client/index.js",
+    "test": "node --test --test-force-exit \"test/*.test.mjs\"",
+    "sync-gogs": "node scripts/sync-gogs.mjs",
+    "build:client": "node scripts/build-client.mjs",
+    "prepublishOnly": "npm run sync-gogs && npm run build:client && npm run check && npm test"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "git",
+    "gogs",
+    "git-server",
+    "self-hosted"
+  ],
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "busboy": "^1.6.0",
+    "ini": "^5.0.0",
+    "marked": "^15.0.0",
+    "qrcode": "^1.5.4",
+    "ssh2": "^1.17.0"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

@@ -1,0 +1,11 @@
+# @weibaohui/dsh-git-server bundle patch: contributes the plugin row into the
+# host composition when this package is installed via `dsh plugin add`.
+#
+# The plugin is HOST-PLANE: it runs an embedded ts-gogs (git HTTP + web UI) as
+# a managed child process on its own port, with token or user-management
+# credential auth. It must land in the host composition (this insert), never
+# inside an agent preset.
+
+- insert:
+    - id: dsh-git-server
+      name: '@weibaohui/dsh-git-server'

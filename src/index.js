@@ -92,6 +92,7 @@ function settingsSchema(Schema) {
     dataDir: Schema.string().default(engine.DEFAULTS.dataDir),
     authMode: Schema.string().default(engine.DEFAULTS.authMode),
     adminPassword: Schema.string().default(engine.DEFAULTS.adminPassword),
+    disableRegistration: Schema.boolean().default(engine.DEFAULTS.disableRegistration),
   })
 }
 
@@ -171,6 +172,34 @@ module.exports = {
       cfg.adminPassword = pw
     }
 
+    // ── ts-gogs 管理桥：用 root:adminPassword 铸 token，代理仓库管理 ──────
+    let adminTokenCache = null
+    async function adminToken(cfg) {
+      if (adminTokenCache && adminTokenCache.pw === cfg.adminPassword) return adminTokenCache.token
+      const auth = 'Basic ' + Buffer.from(`root:${cfg.adminPassword}`).toString('base64')
+      const res = await fetch(`http://127.0.0.1:${cfg.port}/api/v1/users/root/tokens`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: auth },
+        body: JSON.stringify({ name: 'dsh-settings-' + Date.now().toString(36) }),
+      })
+      if (res.status !== 200 && res.status !== 201) throw new Error(`铸管理令牌失败: ${res.status}`)
+      const token = ((await res.json()) || {}).sha1
+      adminTokenCache = { pw: cfg.adminPassword, token }
+      return token
+    }
+    async function gogsApi(cfg, method, path, body) {
+      const token = await adminToken(cfg)
+      const headers = { Authorization: `token ${token}` }
+      if (body !== undefined) headers['Content-Type'] = 'application/json'
+      const res = await fetch(`http://127.0.0.1:${cfg.port}/api/v1${path}`, {
+        method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
+      })
+      const text = await res.text()
+      let json = null
+      try { json = JSON.parse(text) } catch {}
+      return { status: res.status, json, text }
+    }
+
     function umAvailability(cfg) {
       if (cfg.authMode !== 'user-management') return null
       const file = engine.umUsersFilePath()
@@ -202,6 +231,7 @@ module.exports = {
         urlDisplay: `http://${urlHost}:${cfg.port}/`,
         dataDir: cfg.dataDir,
         authMode: cfg.authMode,
+        disableRegistration: !!cfg.disableRegistration,
         umAvailable: umAvailability(cfg),
         adminUser: 'root',
         adminPassword: cfg.adminPassword || readPasswordFile(),
@@ -333,6 +363,35 @@ module.exports = {
             try {
               if (req.method === 'GET' && (rest === '' || rest === '/' || rest === '/status')) {
                 sendJson(res, 200, status())
+                return
+              }
+              if (req.method === 'GET' && rest === '/repos') {
+                const cfg = engine.normalizeConfig(effective())
+                if (!state.handle) { sendJson(res, 200, { ok: true, repos: [] }); return }
+                const list = await gogsApi(cfg, 'GET', '/user/repos')
+                const repos = (Array.isArray(list.json) ? list.json : []).map((x) => ({
+                  id: x.id, name: x.name, fullName: x.full_name || x.name,
+                  private: !!x.private, htmlUrl: x.html_url || x.clone_url,
+                  cloneUrl: `http://${cfg.host === '0.0.0.0' ? '127.0.0.1' : cfg.host}:${cfg.port}/${x.full_name || x.name}.git`,
+                  stars: x.stars_count, issues: x.open_issues_count,
+                }))
+                sendJson(res, 200, { ok: true, repos })
+                return
+              }
+              if (req.method === 'POST' && rest === '/repos') {
+                const body = JSON.parse((await readBody(req)) || '{}')
+                const cfg = engine.normalizeConfig(effective())
+                const name = String(body.name || '').trim()
+                if (!name) { sendJson(res, 400, { ok: false, error: '仓库名不能为空' }); return }
+                const r = await gogsApi(cfg, 'POST', '/user/repos', { name, private: !!body.private, auto_init: body.autoInit !== false, readme: 'Default' })
+                sendJson(res, r.status === 201 ? 201 : r.status, r.status === 201 ? { ok: true, repo: r.json } : { ok: false, error: (r.json && r.json.message) || '创建失败' })
+                return
+              }
+              if (req.method === 'DELETE' && rest.startsWith('/repos/')) {
+                const full = decodeURIComponent(rest.slice('/repos/'.length)).replace(/\.git$/, '')
+                const cfg = engine.normalizeConfig(effective())
+                const r = await gogsApi(cfg, 'DELETE', `/repos/root/${full}`)
+                sendJson(res, [200, 204].includes(r.status) ? 200 : r.status, [200, 204].includes(r.status) ? { ok: true } : { ok: false, error: '删除失败' })
                 return
               }
               if (req.method === 'PUT' && rest === '/settings') {

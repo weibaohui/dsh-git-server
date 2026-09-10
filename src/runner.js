@@ -35,6 +35,7 @@ const DEFAULTS = {
   dataDir: '', // 空 = dshHome()/dsh-git-server/data
   authMode: 'gogs', // 'gogs' | 'user-management'
   adminPassword: '', // 播种的管理员密码（首次自动生成并持久化）
+  disableRegistration: false, // 关闭网页自助注册（仅管理员建号）
 }
 
 const NUM_RANGES = { port: [1024, 65535] }
@@ -65,6 +66,7 @@ function normalizeConfig(raw) {
   cfg.dataDir = resolveDataDir(cfg.dataDir)
   cfg.authMode = cfg.authMode === 'user-management' ? 'user-management' : 'gogs'
   cfg.adminPassword = String(cfg.adminPassword || '')
+  cfg.disableRegistration = !!cfg.disableRegistration
   return cfg
 }
 
@@ -80,6 +82,7 @@ function sanitizePatch(patch, current) {
   if (typeof patch.dataDir === 'string') out.dataDir = patch.dataDir.trim()
   if (patch.authMode === 'gogs' || patch.authMode === 'user-management') out.authMode = patch.authMode
   if (typeof patch.adminPassword === 'string') out.adminPassword = patch.adminPassword
+  if (typeof patch.disableRegistration === 'boolean') out.disableRegistration = patch.disableRegistration
   // 防呆：改动这些字段必须真的有变化，否则 reconciler 会空转重建
   for (const k of Object.keys(out)) if (current && current[k] === out[k]) delete out[k]
   return out
@@ -87,7 +90,7 @@ function sanitizePatch(patch, current) {
 
 function serverFingerprint(cfg) {
   return crypto.createHash('sha256')
-    .update(JSON.stringify({ enabled: cfg.enabled, host: cfg.host, port: cfg.port, dataDir: cfg.dataDir, authMode: cfg.authMode, adminPassword: cfg.adminPassword, vendor: vendorStamp() }))
+    .update(JSON.stringify({ enabled: cfg.enabled, host: cfg.host, port: cfg.port, dataDir: cfg.dataDir, authMode: cfg.authMode, adminPassword: cfg.adminPassword, disableRegistration: cfg.disableRegistration, vendor: vendorStamp() }))
     .digest('hex')
 }
 
@@ -120,6 +123,9 @@ function writeAppIni(cfg) {
   const ini = [
     `RUN_USER = ${os.userInfo().username}`,
     'RUN_MODE = prod',
+    '',
+    '[auth]',
+    'DISABLE_REGISTRATION = ' + (cfg.disableRegistration ? 'true' : 'false'),
     '',
     '[server]',
     `HTTP_ADDR = ${cfg.host}`,
@@ -217,6 +223,7 @@ async function start(cfg, { logger = () => {}, onExit } = {}) {
     GOGS_CUSTOM: path.join(cfg.dataDir, 'custom'),
     DSH_BOOTSTRAP_ADMIN: `root:${cfg.adminPassword || generateSecret()}`,
   }
+  if (cfg.adminPassword) env.DSH_ADMIN_PASSWORD = cfg.adminPassword
   if (cfg.authMode === 'user-management') {
     // 尊重外部注入（测试/自定义），默认取 dsh 家目录的 UM 用户库
     env.DSH_UM_USERS_FILE = process.env.DSH_UM_USERS_FILE || path.join(dshHome(), 'user-management', 'users.json')

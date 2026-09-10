@@ -78,6 +78,18 @@ const ZH = {
   notRunning: '服务器未运行',
   secTip: '提示',
   tipClone: '克隆示例：git clone <地址>/<用户名>/<仓库名>.git',
+  secRepos: '仓库管理',
+  regLabel: '开放网页注册',
+  regHint: '关闭后只有管理员能建号（管理员登录后仍可在网页端建仓）',
+  reposTitle: '仓库',
+  reposEmpty: '还没有仓库——用下面的表单创建，或在 Git 服务器网页端操作',
+  repoCreatePlaceholder: '新仓库名称（如 my-project）',
+  repoCreateBtn: '创建仓库',
+  repoPrivate: '私有',
+  repoDelete: '删除',
+  repoDeleteConfirm: '确定删除仓库',
+  repoLoadFailed: '仓库列表加载失败',
+  reposCount: (n) => `${n} 个仓库`,
 }
 
 const EN = {
@@ -114,6 +126,18 @@ const EN = {
   notRunning: 'Server not running',
   secTip: 'Tip',
   tipClone: 'Clone example: git clone <url>/<username>/<repo>.git',
+  secRepos: 'Repositories',
+  regLabel: 'Open web registration',
+  regHint: 'When off, only the admin can create accounts (admins can still create repos on the web)',
+  reposTitle: 'Repositories',
+  reposEmpty: 'No repositories yet — create one below or on the Git server web UI',
+  repoCreatePlaceholder: 'New repository name (e.g. my-project)',
+  repoCreateBtn: 'Create repository',
+  repoPrivate: 'Private',
+  repoDelete: 'Delete',
+  repoDeleteConfirm: 'Delete repository',
+  repoLoadFailed: 'Failed to load repositories',
+  reposCount: (n) => `${n} repositories`,
 }
 
 // ── Styles ───────────────────────────────────────────────────────────────
@@ -146,10 +170,21 @@ const STYLE = `
 
 function SettingsSection({ t }) {
   const [status, setStatus] = useState(null)
-  const [form, setForm] = useState({ enabled: false, host: '127.0.0.1', port: 3400, dataDir: '', authMode: 'gogs' })
+  const [form, setForm] = useState({ enabled: false, host: '127.0.0.1', port: 3400, dataDir: '', authMode: 'gogs', disableRegistration: false })
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState('')
   const [errText, setErrText] = useState('')
+  const [repos, setRepos] = useState(null)
+  const [newRepo, setNewRepo] = useState('')
+
+  async function loadRepos() {
+    try {
+      const res = await fetch('/dsh-git-server/api/repos')
+      const doc = await res.json()
+      if (!gone) setRepos(doc && doc.ok ? doc.repos : [])
+    } catch { if (!gone) setRepos([]) }
+  }
+  let gone = false
 
   useEffect(() => {
     let gone = false
@@ -165,7 +200,9 @@ function SettingsSection({ t }) {
           port: doc.port || 3400,
           dataDir: doc.dataDir || '',
           authMode: doc.authMode || 'gogs',
+          disableRegistration: !!doc.disableRegistration,
         })
+        if (doc.running) loadRepos()
       } catch (e) {
         if (!gone) setErrText(String((e && e.message) || e))
       }
@@ -183,7 +220,7 @@ function SettingsSection({ t }) {
         body: JSON.stringify(form),
       })
       const doc = await res.json()
-      if (doc && doc.ok !== false) setStatus(doc)
+      if (doc && doc.ok !== false) { setStatus(doc); loadRepos() }
       else setErrText(doc && doc.error ? doc.error : t('saveFailed'))
     } catch (e) {
       setErrText(String((e && e.message) || e))
@@ -191,6 +228,32 @@ function SettingsSection({ t }) {
       setBusy(false)
       setTimeout(() => setToast(''), 2500)
     }
+  }
+
+  async function doCreateRepo() {
+    const name = newRepo.trim()
+    if (!name) return
+    setBusy(true)
+    try {
+      const res = await fetch('/dsh-git-server/api/repos', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, autoInit: true }),
+      })
+      const doc = await res.json()
+      if (doc && doc.ok) { setNewRepo(''); await loadRepos(); setToast(name + ' ✓') }
+      else setErrText((doc && doc.error) || t('saveFailed'))
+    } catch (e) { setErrText(String((e && e.message) || e)) }
+    finally { setBusy(false); setTimeout(() => setToast(''), 2500) }
+  }
+
+  async function doDeleteRepo(name) {
+    if (!confirm(t('repoDeleteConfirm') + ' ' + name + ' ?')) return
+    setBusy(true)
+    try {
+      await fetch('/dsh-git-server/api/repos/' + encodeURIComponent(name), { method: 'DELETE' })
+      await loadRepos()
+    } catch (e) { setErrText(String((e && e.message) || e)) }
+    finally { setBusy(false) }
   }
 
   async function doRotate() {
@@ -257,6 +320,11 @@ function SettingsSection({ t }) {
       status && status.authMode === 'user-management' && status.umAvailable !== 'ok'
         ? h('div', { className: 'dgs-hint', style: { color: 'var(--dsw-alias-state-error-primary)' } }, t('umMissing'))
         : null,
+      h('div', { className: 'dgs-row' },
+        h('label', null, t('regLabel')),
+        h('input', { type: 'checkbox', checked: !form.disableRegistration,
+          onChange: (e) => setForm((f) => ({ ...f, disableRegistration: !e.target.checked })) })),
+      h('div', { className: 'dgs-hint' }, t('regHint')),
 
       h('div', { className: 'dgs-row' },
         h('label', null, t('adminCredTitle')),
@@ -273,6 +341,29 @@ function SettingsSection({ t }) {
           ? h('a', { className: 'dgs-open', href: status.urlLocal, target: '_blank', rel: 'noreferrer' }, '↗ ' + t('openServer'))
           : h('span', { className: 'dgs-hint' }, t('notRunning')),
         status && status.running ? h('span', { className: 'dgs-mono' }, t('tipClone')) : null),
+
+      h('hr', { className: 'dgs-divider' }),
+      h('h2', { className: 'dgs-title' }, t('secRepos'),
+        Array.isArray(repos) ? h('span', { className: 'dgs-hint' }, t('reposCount')(repos.length)) : null),
+      status && status.running
+        ? h('div', { className: 'dgs-row' },
+            h('input', { type: 'text', value: newRepo, placeholder: t('repoCreatePlaceholder'),
+              onChange: (e) => setNewRepo(e.target.value),
+              onKeyDown: (e) => { if (e.key === 'Enter') doCreateRepo() },
+              style: { flex: '1', minWidth: '180px', padding: '6px 10px', fontSize: '13px', color: 'var(--dsw-alias-text-primary)', background: 'var(--dsw-alias-surface-input)', border: '1px solid var(--dsw-alias-border-default)', borderRadius: '6px' } }),
+            h(prim('Button') || 'button', { 'data-p-button': 'primary', onClick: doCreateRepo, disabled: busy || !newRepo.trim(),
+              style: P ? undefined : { padding: '6px 12px', cursor: 'pointer' } }, t('repoCreateBtn')))
+        : null,
+      Array.isArray(repos) && repos.length
+        ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+            repos.map((rp) => h('div', { key: rp.id || rp.name, className: 'dgs-row', style: { gap: '8px' } },
+              h('a', { className: 'dgs-link', href: rp.htmlUrl, target: '_blank', rel: 'noreferrer',
+                  style: { minWidth: '140px', fontWeight: '600' } }, rp.name),
+              rp.private ? h('span', { className: 'dgs-badge' }, t('repoPrivate')) : null,
+              h('span', { className: 'dgs-mono', style: { flex: '1' } }, rp.cloneUrl),
+              h(prim('Button') || 'button', { 'data-p-button': 'secondary', onClick: () => doDeleteRepo(rp.name), disabled: busy,
+                style: P ? undefined : { padding: '3px 10px', cursor: 'pointer' } }, t('repoDelete')))))
+        : (status && status.running ? h('div', { className: 'dgs-hint' }, t('reposEmpty')) : null),
 
       errText ? h('div', { className: 'dgs-hint', style: { color: 'var(--dsw-alias-state-error-primary)' } }, errText) : null,
       h('div', { className: 'dgs-toolbar' },

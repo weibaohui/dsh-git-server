@@ -90,6 +90,13 @@ const ZH = {
   repoDeleteConfirm: '确定删除仓库',
   repoLoadFailed: '仓库列表加载失败',
   reposCount: (n) => `${n} 个仓库`,
+  uiTitle: 'Git 服务器 · 完整界面',
+  uiOpenNew: '在新标签页打开',
+  uiReload: '刷新',
+  uiConfigShow: '展开配置与管理',
+  uiConfigHide: '收起配置与管理',
+  uiLoginHint: '首次进入需要登录：账号体系在下方配置里选择（user-management 账号可直接用 dsh 的用户名密码）。',
+  uiNotRunning: 'Git 服务器未运行——在下方配置里勾选启用后自动启动。',
 }
 
 const EN = {
@@ -138,6 +145,13 @@ const EN = {
   repoDeleteConfirm: 'Delete repository',
   repoLoadFailed: 'Failed to load repositories',
   reposCount: (n) => `${n} repositories`,
+  uiTitle: 'Git Server · Full UI',
+  uiOpenNew: 'Open in new tab',
+  uiReload: 'Reload',
+  uiConfigShow: 'Show configuration & management',
+  uiConfigHide: 'Hide configuration & management',
+  uiLoginHint: 'First visit needs sign-in: pick the account system below (user-management accounts work with your dsh username/password).',
+  uiNotRunning: 'Git server not running — enable it in the configuration below.',
 }
 
 // ── Styles ───────────────────────────────────────────────────────────────
@@ -163,6 +177,9 @@ const STYLE = `
   .dgs-toolbar { display: flex; justify-content: flex-end; gap: 8px; }
   .dgs-link { font-size: 13px; color: var(--dsw-alias-text-link); }
   a.dgs-open { font-size: 13px; color: var(--dsw-alias-text-link); }
+  .dgs-iframe { width: 100%; height: 72vh; border: 1px solid var(--dsw-alias-border-default); border-radius: 10px; background: #fff; }
+  .dgs-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  details.dgs-config > summary { cursor: pointer; font-size: 13px; color: var(--dsw-alias-text-secondary); user-select: none; }
 </style>
 `
 
@@ -174,6 +191,8 @@ function SettingsSection({ t }) {
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState('')
   const [errText, setErrText] = useState('')
+  const [configOpen, setConfigOpen] = useState(null) // null=未运行时自动展开
+  const [uiKey, setUiKey] = useState(0)
   const [repos, setRepos] = useState(null)
   const [newRepo, setNewRepo] = useState('')
 
@@ -270,16 +289,16 @@ function SettingsSection({ t }) {
     } catch {}
   }
 
+  const running = !!(status && status.running)
+  const badge = !status
+    ? null
+    : status.error
+      ? h('span', { className: 'dgs-badge bad' }, t('failed'))
+      : status.running
+        ? h('span', { className: 'dgs-badge ok' }, t('running'))
+        : h('span', { className: 'dgs-badge' }, t('stopped'))
   let body
   try {
-    const badge = !status
-      ? null
-      : status.error
-        ? h('span', { className: 'dgs-badge bad' }, t('failed'))
-        : status.running
-          ? h('span', { className: 'dgs-badge ok' }, t('running'))
-          : h('span', { className: 'dgs-badge' }, t('stopped'))
-
     body = h('div', { className: 'dgs-card' },
       h('h2', { className: 'dgs-title' }, t('title'), badge,
         status && status.crashes > 0 ? h('span', { className: 'dgs-hint' }, `${t('crashes')}: ${status.crashes}`) : null),
@@ -378,8 +397,26 @@ function SettingsSection({ t }) {
       '⚠️ ' + String((renderErr && renderErr.message) || renderErr))
   }
 
+  const detailsOpen = configOpen === null ? !running : configOpen
   return h('div', { className: 'dgs-page' },
-    h('div', { className: 'dgs-body' }, body),
+    h('div', { className: 'dgs-body' },
+      h('div', { className: 'dgs-toolbar' },
+        badge,
+        running ? h(prim('Button') || 'button', {
+          'data-p-button': 'secondary', onClick: () => setUiKey((k) => k + 1),
+          style: P ? undefined : { padding: '4px 10px', cursor: 'pointer' },
+        }, t('uiReload')) : null,
+        running ? h('a', { className: 'dgs-open', href: '/dsh-git-server/ui/', target: '_blank', rel: 'noreferrer' }, '↗ ' + t('uiOpenNew')) : null,
+      ),
+      running
+        ? h('iframe', { key: uiKey, className: 'dgs-iframe', src: '/dsh-git-server/ui/', title: t('uiTitle') })
+        : h('div', { className: 'dgs-hint' }, t('uiNotRunning')),
+      running ? h('div', { className: 'dgs-hint' }, t('uiLoginHint')) : null,
+      h('details', { className: 'dgs-config', open: !!detailsOpen,
+        onToggle: (e) => setConfigOpen(e.target.open) },
+        h('summary', null, detailsOpen ? t('uiConfigHide') : t('uiConfigShow')),
+        h('div', { style: { paddingTop: '10px' } }, body)),
+    ),
   )
 }
 

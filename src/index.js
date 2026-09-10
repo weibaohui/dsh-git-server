@@ -352,7 +352,57 @@ module.exports = {
       })
     }
 
+    // ── 完整界面反代：/dsh-git-server/ui/* → 内嵌 ts-gogs ────────────────
+    // 浏览器统一从 dsh 访问 git 网页端（dsh 门禁认证），不再直连插件端口。
+    // git 客户端仍可直连 <host>:<port>（CLI 凭据简单，走门禁反而不兼容）。
+    function proxyUi(req, res) {
+      const cfg = engine.normalizeConfig(effective())
+      const childPort = cfg.port
+      const url = new URL(req.url || '/', 'http://dsh.local')
+      const targetPath = url.pathname + url.search // 已带 /dsh-git-server/ui 前缀（= 子进程子路径）
+      const headers = { ...req.headers }
+      delete headers.host
+      delete headers['content-length']
+      delete headers.connection
+      const upstream = fetch(`http://127.0.0.1:${childPort}${targetPath}`, {
+        method: req.method,
+        headers,
+        body: ['GET', 'HEAD'].includes(req.method) ? undefined : req,
+        duplex: 'half',
+        redirect: 'manual',
+      })
+      upstream.then((r) => {
+        const resHeaders = {}
+        r.headers.forEach((v, k) => {
+          if (['content-encoding', 'transfer-encoding', 'connection', 'content-security-policy', 'x-frame-options'].includes(k.toLowerCase())) return
+          resHeaders[k] = v
+        })
+        res.writeHead(r.status, resHeaders)
+        if (r.body) {
+          const reader = r.body.getReader()
+          const pump = () => reader.read().then(({ done, value }) => {
+            if (done) { res.end(); return }
+            res.write(Buffer.from(value))
+            pump()
+          }).catch(() => { try { res.end() } catch {} })
+          pump()
+        } else res.end()
+      }).catch((e) => {
+        try {
+          res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end('dsh-git-server: Git 服务器未运行 — 请在设置里启用')
+        } catch {}
+      })
+    }
+
     if (webServer && typeof webServer.register === 'function') {
+      ctx.effect(() => {
+        webServer.register({
+          kind: 'prefix',
+          path: engine.UI_SUBPATH,
+          handler: proxyUi,
+        })
+      }, 'dsh-git-server: ui proxy route')
       ctx.effect(() => {
         webServer.register({
           kind: 'prefix',

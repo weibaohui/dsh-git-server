@@ -83,8 +83,9 @@ test('插件 apply：注册 settings 与同源路由，disabled 不启动子进�
   plugin.apply(host, { enabled: false, dataDir })
   await new Promise((r) => setTimeout(r, 300))
   assert.ok(host.registered.settings, 'settings 未注册')
-  assert.equal(host.registered.routes.length, 1)
-  assert.equal(host.registered.routes[0].path, '/dsh-git-server/api')
+  assert.equal(host.registered.routes.length, 2)
+  assert.deepEqual(host.registered.routes.map((r) => r.path),
+    ['/dsh-git-server/ui', '/dsh-git-server/api'])
   // status 路由不应启动子进程
   const req = new EventEmitter()
   req.url = '/dsh-git-server/api/status'
@@ -93,7 +94,8 @@ test('插件 apply：注册 settings 与同源路由，disabled 不启动子进�
   const res = new EventEmitter()
   res.writeHead = (code, headers) => { wrote += code }
   res.end = (body) => { res.body = body || '' }
-  await host.registered.routes[0].handler(req, res)
+  const apiRoute = host.registered.routes.find((r) => r.path === '/dsh-git-server/api')
+  await apiRoute.handler(req, res)
   const doc = JSON.parse(res.body)
   assert.equal(doc.running, false)
   for (const c of host._cleanups) try { c() } catch {}

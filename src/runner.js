@@ -12,7 +12,7 @@
  *      ECONNRESET 噪音），超时判失败并带上最后一段 stderr；
  *   4. 崩溃自动拉起（退避 2s→30s）；配置指纹变化由上层先 stop 再 start。
  *
- * 认证模式（authMode）通过环境变量传给 ts-gogs：
+ * 账户单一来源 = user-management：用户库路径通过环境变量传给 ts-gogs（
  *   - user-management：DSH_UM_USERS_FILE 指向 user-management 的 users.json，
  *     git HTTP Basic 与网页登录接受 UM 用户名密码（映射到本库管理员）；
  *   - gogs（默认）：ts-gogs 自己的账号/令牌体系。首次启动用
@@ -28,16 +28,15 @@ const os = require('node:os')
 const PLUGIN_ID = 'dsh-git-server'
 // gogs 以该子路径对外（生成的链接/资产都带此前缀），宿主代理路由与之对齐
 const UI_SUBPATH = '/dsh-git-server/ui'
-const VENDOR_DIR = path.join(__dirname, '..', 'vendor', 'ts-gogs')
+const SERVER_DIR = path.join(__dirname, '..', 'server')
 
 const DEFAULTS = {
   enabled: false,
   host: '127.0.0.1',
   port: 3400,
   dataDir: '', // 空 = dshHome()/dsh-git-server/data
-  authMode: 'gogs', // 'gogs' | 'user-management'
   adminPassword: '', // 播种的管理员密码（首次自动生成并持久化）
-  disableRegistration: false, // 关闭网页自助注册（仅管理员建号）
+  impersonateSecret: '', // 代理免登录用的会话铸造密钥（自动生成持久化）
 }
 
 const NUM_RANGES = { port: [1024, 65535] }
@@ -66,9 +65,8 @@ function normalizeConfig(raw) {
   cfg.host = String(cfg.host || DEFAULTS.host)
   cfg.port = Math.max(NUM_RANGES.port[0], Math.min(NUM_RANGES.port[1], Math.floor(Number(cfg.port) || DEFAULTS.port)))
   cfg.dataDir = resolveDataDir(cfg.dataDir)
-  cfg.authMode = cfg.authMode === 'user-management' ? 'user-management' : 'gogs'
   cfg.adminPassword = String(cfg.adminPassword || '')
-  cfg.disableRegistration = !!cfg.disableRegistration
+  cfg.impersonateSecret = String(cfg.impersonateSecret || '')
   return cfg
 }
 
@@ -82,9 +80,8 @@ function sanitizePatch(patch, current) {
     if (Number.isFinite(n) && n >= NUM_RANGES.port[0] && n <= NUM_RANGES.port[1]) out.port = n
   }
   if (typeof patch.dataDir === 'string') out.dataDir = patch.dataDir.trim()
-  if (patch.authMode === 'gogs' || patch.authMode === 'user-management') out.authMode = patch.authMode
   if (typeof patch.adminPassword === 'string') out.adminPassword = patch.adminPassword
-  if (typeof patch.disableRegistration === 'boolean') out.disableRegistration = patch.disableRegistration
+  if (typeof patch.impersonateSecret === 'string') out.impersonateSecret = patch.impersonateSecret
   // 防呆：改动这些字段必须真的有变化，否则 reconciler 会空转重建
   for (const k of Object.keys(out)) if (current && current[k] === out[k]) delete out[k]
   return out
@@ -92,7 +89,7 @@ function sanitizePatch(patch, current) {
 
 function serverFingerprint(cfg) {
   return crypto.createHash('sha256')
-    .update(JSON.stringify({ enabled: cfg.enabled, host: cfg.host, port: cfg.port, dataDir: cfg.dataDir, authMode: cfg.authMode, adminPassword: cfg.adminPassword, disableRegistration: cfg.disableRegistration, vendor: vendorStamp() }))
+    .update(JSON.stringify({ enabled: cfg.enabled, host: cfg.host, port: cfg.port, dataDir: cfg.dataDir, adminPassword: cfg.adminPassword, impersonateSecret: cfg.impersonateSecret, vendor: vendorStamp() }))
     .digest('hex')
 }
 
@@ -100,7 +97,7 @@ let _vendorStamp = null
 function vendorStamp() {
   if (_vendorStamp) return _vendorStamp
   try {
-    const st = fs.statSync(path.join(VENDOR_DIR, 'dist', 'index.js'))
+    const st = fs.statSync(path.join(SERVER_DIR, 'dist', 'index.js'))
     _vendorStamp = `${st.mtimeMs}:${st.size}`
   } catch {
     _vendorStamp = 'missing'
@@ -127,7 +124,7 @@ function writeAppIni(cfg) {
     'RUN_MODE = prod',
     '',
     '[auth]',
-    'DISABLE_REGISTRATION = ' + (cfg.disableRegistration ? 'true' : 'false'),
+    'DISABLE_REGISTRATION = true',
     '',
     '[server]',
     `HTTP_ADDR = ${cfg.host}`,
@@ -174,7 +171,7 @@ function ensureDeps({ logger = () => {} } = {}) {
   let probe
   try {
     const { createRequire } = require('node:module')
-    probe = createRequire(path.join(VENDOR_DIR, 'dist', 'index.js'))
+    probe = createRequire(path.join(SERVER_DIR, 'dist', 'index.js'))
   } catch {}
   const critical = ['better-sqlite3', 'ssh2', 'marked', 'ini', 'busboy', 'qrcode']
   const missing = []
@@ -187,7 +184,7 @@ function ensureDeps({ logger = () => {} } = {}) {
   depsInstallInFlight = new Promise((resolve, reject) => {
     const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
     const child = spawn(npm, ['install', '--omit=dev', '--no-audit', '--no-fund'], {
-      cwd: path.join(VENDOR_DIR, '..', '..'),
+      cwd: path.join(SERVER_DIR, '..', '..'),
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let tail = ''
@@ -210,15 +207,33 @@ function ensureDeps({ logger = () => {} } = {}) {
   return depsInstallInFlight
 }
 
+/** 清理本插件的历史孤儿子进程（命令行含本插件 server 入口路径的才杀）。 */
+function killOrphanChildren(logger) {
+  try {
+    const marker = path.join(SERVER_DIR, 'dist', 'index.js')
+    const out = require('node:child_process')
+      .execSync(`ps ax -o pid=,command= | grep -F '${marker}' | grep -v grep || true`, { shell: '/bin/bash' })
+      .toString()
+    for (const line of out.split('\n')) {
+      const pid = parseInt(line.trim().split(/\s+/)[0], 10)
+      if (pid && pid !== process.pid) {
+        try { process.kill(pid, 'SIGTERM'); logger(`清理历史孤儿子进程 pid=${pid}`) } catch {}
+      }
+    }
+  } catch {}
+}
+
 /**
  * 启动 ts-gogs 子进程。返回句柄 { pid, stop() }。
  * 就绪前抛错（带 stderr 尾部）；就绪判定 = GET / 返回任意状态（TS 服务
  * 起来后即使 404/302 也代表监听器在线）。
  */
 async function start(cfg, { logger = () => {}, onExit } = {}) {
+  killOrphanChildren(logger)
+  await new Promise((r) => setTimeout(r, 600)) // 等端口释放
   await ensureDeps({ logger })
   const appIni = writeAppIni(cfg)
-  const entry = path.join(VENDOR_DIR, 'dist', 'index.js')
+  const entry = path.join(SERVER_DIR, 'dist', 'index.js')
   if (!fs.existsSync(entry)) throw new Error(`vendor/ts-gogs 构建产物缺失: ${entry}`)
   const env = {
     ...process.env,
@@ -226,15 +241,11 @@ async function start(cfg, { logger = () => {}, onExit } = {}) {
     DSH_BOOTSTRAP_ADMIN: `root:${cfg.adminPassword || generateSecret()}`,
   }
   if (cfg.adminPassword) env.DSH_ADMIN_PASSWORD = cfg.adminPassword
-  if (cfg.authMode === 'user-management') {
-    // 尊重外部注入（测试/自定义），默认取 dsh 家目录的 UM 用户库
-    env.DSH_UM_USERS_FILE = process.env.DSH_UM_USERS_FILE || path.join(dshHome(), 'user-management', 'users.json')
-    env.DSH_UM_AS_USER = process.env.DSH_UM_AS_USER || 'root'
-  } else {
-    delete env.DSH_UM_USERS_FILE
-  }
+  if (cfg.impersonateSecret) env.DSH_IMPERSONATE_SECRET = cfg.impersonateSecret
+  // 账户单一来源：始终对接 user-management 用户库（桥内部处理缺失回退）
+  env.DSH_UM_USERS_FILE = process.env.DSH_UM_USERS_FILE || path.join(dshHome(), 'user-management', 'users.json')
 
-  const child = spawn(process.execPath, [entry], { cwd: VENDOR_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(process.execPath, [entry], { cwd: SERVER_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] })
   let stderrTail = ''
   child.stderr.on('data', (d) => {
     stderrTail = (stderrTail + d.toString()).slice(-4000)
@@ -266,11 +277,18 @@ async function start(cfg, { logger = () => {}, onExit } = {}) {
   }
 
   let stopping = false
+  const parentExit = () => { try { child.kill('SIGKILL') } catch {} }
+  process.once('exit', parentExit)
+  process.once('SIGTERM', parentExit)
+  process.once('SIGINT', parentExit)
   const handle = {
     pid: child.pid,
     async stop() {
       if (stopping) return
       stopping = true
+      process.removeListener('exit', parentExit)
+      process.removeListener('SIGTERM', parentExit)
+      process.removeListener('SIGINT', parentExit)
       child.removeAllListeners('exit')
       child.kill('SIGTERM')
       const t = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, 5000)
@@ -295,7 +313,7 @@ module.exports = {
   PLUGIN_ID,
   DEFAULTS,
   NUM_RANGES,
-  VENDOR_DIR,
+  SERVER_DIR,
   dshHome,
   defaultDataDir,
   resolveDataDir,

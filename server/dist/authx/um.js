@@ -4,14 +4,16 @@
 // （通常 ~/.dsh/user-management/users.json）。启用后：
 //   - git HTTP Basic 认证（authenticateUserByBasic）优先对 UM 用户库验证；
 //   - 网页登录（/api/web/user/sign-in）同样接受 UM 用户名/密码。
-// 验证通过的 UM 用户映射到本库的管理员账号（DSH_UM_AS_USER，默认 root）——
-// UM 侧不携带仓库级权限模型，统一按管理员对待（与 dsh-webdav-server 的
-// um-auth 同一取舍：挂载/推送凭据只回答"是不是这个团队的人"）。
+// 账户单一来源：本库不设独立账号体系，UM 用户验证通过时按需创建**同名**
+// 本库账号，并把本库存储密码同步为 UM 密码（用户名/密码/角色三对齐）。
+// UM admin → 本库管理员；UM 侧改密后下次认证自动跟随；disabled 拒绝。
 //
 // 口令格式跨仓复刻 user-management store.js：crypto.scrypt（salt 为 hex 字符串、
 // hex hash，N=16384/r=8/p=1，keylen 32）。users.json 缺失/损坏 → 桥不可用，
 // 回退本库认证，绝不把人锁死在外面。
 import * as fs from 'node:fs';
+import * as dbm from '../db/db.js';
+import { randomSalt, encodePassword } from './password.js';
 import { createHash, scryptSync, timingSafeEqual } from 'node:crypto';
 const KEY_LEN = 32;
 const SCRYPT_COST = 16384;
@@ -68,6 +70,40 @@ export function umAvailability() {
     if (!umAuthEnabled())
         return 'disabled';
     return loadUsers() ? 'ok' : 'missing';
+}
+export function umUserRecord(username) {
+    const users = loadUsers();
+    return users ? users.find((u) => u && u.username === username) || null : null;
+}
+/**
+ * 账户拉通（用户名+密码+角色三对齐）：UM 用户验证通过后，在本库创建/复用
+ * 同名账号，并把本库存储密码同步为本次验证通过的 UM 密码——网页登录、git
+ * Basic、API Basic 全场景密码一致。UM 侧改密后，下次认证自动跟随。
+ */
+export function ensureAlignedUser(username, password) {
+    const rec = umUserRecord(username);
+    if (!rec || rec.disabled)
+        return null;
+    if (typeof password !== 'string' || !password)
+        return null;
+    const isAdmin = rec.role === 'admin' ? 1 : 0;
+    let user = dbm.getUserByUsername(username);
+    const now = Math.floor(Date.now() / 1000);
+    if (!user) {
+        const salt = randomSalt();
+        const pbkdf2 = encodePassword(password, salt);
+        dbm.db().prepare('INSERT INTO user (name, lower_name, email, passwd, salt, type, is_admin, created_unix, updated_unix) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)').run(username, username.toLowerCase(), `${username.toLowerCase()}@users.dsh.local`, pbkdf2, salt, isAdmin, now, now);
+    }
+    else {
+        const want = encodePassword(password, user.salt);
+        if (want !== user.passwd) {
+            dbm.db().prepare('UPDATE user SET passwd = ?, updated_unix = ? WHERE id = ?').run(want, now, user.id);
+        }
+        if ((user.is_admin === 1 ? 1 : 0) !== isAdmin) {
+            dbm.db().prepare('UPDATE user SET is_admin = ?, updated_unix = ? WHERE id = ?').run(isAdmin, now, user.id);
+        }
+    }
+    return dbm.getUserByUsername(username) ?? null;
 }
 function verifyScrypt(record, password) {
     if (!record || !record.salt || !record.passHash || typeof password !== 'string')

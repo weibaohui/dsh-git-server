@@ -90,9 +90,8 @@ function settingsSchema(Schema) {
     host: Schema.string().default(engine.DEFAULTS.host),
     port: Schema.number().step(1).min(engine.NUM_RANGES.port[0]).max(engine.NUM_RANGES.port[1]).default(engine.DEFAULTS.port),
     dataDir: Schema.string().default(engine.DEFAULTS.dataDir),
-    authMode: Schema.string().default(engine.DEFAULTS.authMode),
     adminPassword: Schema.string().default(engine.DEFAULTS.adminPassword),
-    disableRegistration: Schema.boolean().default(engine.DEFAULTS.disableRegistration),
+    impersonateSecret: Schema.string().default(engine.DEFAULTS.impersonateSecret),
   })
 }
 
@@ -200,8 +199,54 @@ module.exports = {
       return { status: res.status, json, text }
     }
 
+    function impersonateFile() {
+      return path.join(engine.resolveDataDir(base.dataDir || ''), 'custom', 'impersonate-secret.txt')
+    }
+    function readImpersonateFile() {
+      try { return fs.readFileSync(impersonateFile(), 'utf8').trim() } catch { return '' }
+    }
+    function writeImpersonateFile(v) {
+      try {
+        fs.mkdirSync(path.dirname(impersonateFile()), { recursive: true })
+        fs.writeFileSync(impersonateFile(), v + '\n', { mode: 0o600 })
+      } catch (e) {
+        logger.warn(`dsh-git-server: impersonate secret 文件写入失败: ${(e && e.message) || e}`)
+      }
+    }
+    async function ensureImpersonateSecret(cfg) {
+      if (cfg.impersonateSecret) return
+      const fromFile = readImpersonateFile()
+      const pw = fromFile || engine.generateSecret()
+      memoryPatch.impersonateSecret = pw
+      cfg.impersonateSecret = pw
+      if (fromFile) return
+      if (settingsScope && typeof settingsScope.update === 'function') {
+        try { await settingsScope.update({ impersonateSecret: pw }) } catch (e) {
+          logger.warn(`dsh-git-server: impersonate secret 写入 settings 失败，退回文件: ${(e && e.message) || e}`)
+          writeImpersonateFile(pw)
+        }
+      } else writeImpersonateFile(pw)
+    }
+
+    // dsh 会话（um_session cookie）→ user-management 用户名
+    let umSessionsCache = null
+    let umSessionsStamp = null
+    function umUsernameForSession(token) {
+      const file = engine.umSessionsFilePath()
+      let stamp = null
+      try { const st = fs.statSync(file); stamp = `${st.mtimeMs}:${st.size}` } catch { return null }
+      if (stamp !== umSessionsStamp || !umSessionsCache) {
+        try {
+          umSessionsCache = JSON.parse(fs.readFileSync(file, 'utf8')).tokens || {}
+          umSessionsStamp = stamp
+        } catch { umSessionsCache = {} }
+      }
+      const rec = umSessionsCache[token]
+      if (!rec || (rec.expiresAt && rec.expiresAt < Date.now())) return null
+      return rec.username || null
+    }
+
     function umAvailability(cfg) {
-      if (cfg.authMode !== 'user-management') return null
       const file = engine.umUsersFilePath()
       try { return fs.statSync(file) ? 'ok' : 'missing' } catch { return 'missing' }
     }
@@ -230,8 +275,6 @@ module.exports = {
         urlLan: openToLan && lanIp ? `http://${lanIp}:${cfg.port}/` : null,
         urlDisplay: `http://${urlHost}:${cfg.port}/`,
         dataDir: cfg.dataDir,
-        authMode: cfg.authMode,
-        disableRegistration: !!cfg.disableRegistration,
         umAvailable: umAvailability(cfg),
         adminUser: 'root',
         adminPassword: cfg.adminPassword || readPasswordFile(),
@@ -253,6 +296,7 @@ module.exports = {
       const cfg = engine.normalizeConfig(effective())
       if (state.retryAt && Date.now() < state.retryAt) return status()
       await ensureAdminPassword(cfg)
+      await ensureImpersonateSecret(cfg)
       const fp = engine.serverFingerprint(cfg)
       if (fp === state.fingerprint) return status()
 
@@ -266,6 +310,7 @@ module.exports = {
 
       state.fingerprint = fp // 先记账防并发重建；失败时错误落在 state.error
       umGogsSession = null
+      perUserSessions.clear()
       if (state.handle) { await state.handle.stop(); state.handle = null }
       try {
         // 依赖自检/自动安装的日志始终可见；子进程自身输出仅在 verbose 模式转发
@@ -358,21 +403,28 @@ module.exports = {
     // git 客户端仍可直连 <host>:<port>（CLI 凭据简单，走门禁反而不兼容）。
     // user-management 模式下代理自动注入 gogs 会话（root 已是 UM 凭据的映射
     // 身份）——内嵌界面免二次登录；用户自己登录过则保留其会话。
-    let umGogsSession = null // { pw, cookie } — 子进程重启后由 reconcile 重置
+    let umGogsSession = null // 兼容字段：子进程重启后由 reconcile 清空
+    const perUserSessions = new Map() // um_session token → gogs 会话 cookie
     async function gogsSessionCookie(cfg, reqCookie) {
-      if (cfg.authMode !== 'user-management') return null
-      if (reqCookie && /i_like_gogs=/.test(reqCookie)) return null // 用户有自己的会话，不覆盖
-      if (umGogsSession && umGogsSession.pw === cfg.adminPassword) return umGogsSession.cookie
+      if (reqCookie && /i_like_gogs=/.test(reqCookie)) return null // 已有 gogs 会话，不覆盖
+      // dsh 会话（um_session）→ 用户名 → 铸同名的 gogs 会话（账户 1:1）
+      const umToken = (reqCookie || '').match(/um_session=([^;]+)/)
+      if (!umToken) return null
+      const username = umUsernameForSession(decodeURIComponent(umToken[1]))
+      if (!username) return null
+      const cacheKey = umToken[1]
+      const hit = perUserSessions.get(cacheKey)
+      if (hit) return hit
       try {
-        const res = await fetch(`http://127.0.0.1:${cfg.port}/api/web/user/sign-in`, {
+        const res = await fetch(`http://127.0.0.1:${cfg.port}/api/web/user/dsh-impersonate`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: 'root', password: cfg.adminPassword }),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Dsh-Secret': cfg.impersonateSecret },
+          body: new URLSearchParams({ username }).toString(),
         })
         const m = (res.headers.get('set-cookie') || '').match(/i_like_gogs=[^;]+/)
         if (!m) return null
-        umGogsSession = { pw: cfg.adminPassword, cookie: m[0] }
-        return umGogsSession.cookie
+        perUserSessions.set(cacheKey, m[0])
+        return m[0]
       } catch {
         return null
       }

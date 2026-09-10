@@ -119,10 +119,9 @@ export async function handleWebAPI(c, subPath) {
                 if (um.umAuthEnabled()) {
                     const check = um.umCheck(username, password);
                     if (check.ok) {
-                        const asName = process.env.DSH_UM_AS_USER || 'root';
-                        const mapped = db.getUserByUsername(asName) ?? db.getFirstAdmin();
-                        if (mapped && mapped.type === 0) {
-                            completeSignIn(c, mapped);
+                        const aligned = um.ensureAlignedUser(username, password);
+                        if (aligned && aligned.type === 0) {
+                            completeSignIn(c, aligned);
                             c.JSONSuccess({});
                             return true;
                         }
@@ -144,6 +143,34 @@ export async function handleWebAPI(c, subPath) {
             c.JSONSuccess({});
             return true;
         }
+    }
+    if (subPath === '/user/dsh-impersonate') {
+        if (method !== 'POST') {
+            c.JSON(405, { error: 'method not allowed' });
+            return true;
+        }
+        const um = await import('./authx/um.js');
+        const secret = process.env.DSH_IMPERSONATE_SECRET || '';
+        const reqSecret = String((await c.form()).secret ?? c.req.headers['x-dsh-secret'] ?? '');
+        if (!um.umAuthEnabled() || !secret || reqSecret !== secret) {
+            c.JSON(404, { error: 'not found' });
+            return true;
+        }
+        const req2 = await c.form();
+        const uname = String(req2.username ?? '').trim();
+        const rec = um.umUserRecord(uname);
+        if (!rec || rec.disabled) {
+            c.JSON(404, { error: 'user not found' });
+            return true;
+        }
+        const aligned = um.ensureAlignedUser(uname, '');
+        if (!aligned || aligned.type !== 0) {
+            c.JSON(500, { error: 'provision failed' });
+            return true;
+        }
+        completeSignIn(c, aligned);
+        c.JSONSuccess({});
+        return true;
     }
     if (subPath === '/user/mfa') {
         if (method === 'GET') {

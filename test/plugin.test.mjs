@@ -40,11 +40,9 @@ test('normalizeConfig: 默认值与范围收敛', () => {
   assert.equal(cfg.enabled, false)
   assert.equal(cfg.host, '127.0.0.1')
   assert.equal(cfg.port, 3400)
-  assert.equal(cfg.authMode, 'gogs')
   assert.ok(cfg.dataDir.includes('dsh-git-server'))
-  const bad = runner.normalizeConfig({ port: 80, authMode: 'weird' })
+  const bad = runner.normalizeConfig({ port: 80 })
   assert.ok(bad.port >= 1024)
-  assert.equal(bad.authMode, 'gogs')
 })
 
 test('sanitizePatch: 只收白名单且跳过无变化字段', () => {
@@ -112,12 +110,16 @@ test('端到端：子进程启动 → git clone/push → user-management 凭据 
   writeFileSync(umFile, JSON.stringify({ seq: 1, users: [{ id: 'u_1_test', username: 'drilluser', role: 'admin', salt, passHash: hash, createdAt: Date.now() }] }))
   process.env.DSH_UM_USERS_FILE = umFile
 
+  const { createServer } = await import('node:net')
+  const freePort = await new Promise((resolve) => {
+    const srv = createServer()
+    srv.listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => resolve(port)) })
+  })
   const cfg = runner.normalizeConfig({
     enabled: true,
     host: '127.0.0.1',
-    port: 3891,
+    port: freePort,
     dataDir,
-    authMode: 'user-management',
     adminPassword: 'seed-admin-pass-123',
   })
   const handle = await runner.start(cfg, { logger: () => {} })
@@ -125,34 +127,41 @@ test('端到端：子进程启动 → git clone/push → user-management 凭据 
     assert.ok(handle.pid > 0)
     const dir = mkdtempSync(join(tmpdir(), 'dgs-work-'))
 
-    // 0) UM 凭据走 basic 铸 token 并建仓（映射管理员 root，仓库 API 均 root 身份）
-    const mintRes = await fetch('http://127.0.0.1:3891/api/v1/users/root/tokens', {
+    // 0) UM 凭据走 basic 铸 token（同名账户拉通：token 属于 drilluser 本人）
+    const mintRes = await fetch(`http://127.0.0.1:${freePort}/api/v1/users/drilluser/tokens`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Basic ' + Buffer.from('drilluser:Passw0rd!123').toString('base64') },
       body: JSON.stringify({ name: 'e2e' }),
     })
     assert.equal(mintRes.status, 201)
-    const rootToken = (await mintRes.json()).sha1
-    const createRes = await fetch('http://127.0.0.1:3891/api/v1/user/repos', {
+    const drillToken = (await mintRes.json()).sha1
+    const createRes = await fetch(`http://127.0.0.1:${freePort}/api/v1/user/repos`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `token ${rootToken}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `token ${drillToken}` },
       body: JSON.stringify({ name: 'demo', auto_init: true, readme: 'Default', private: false }),
     })
     assert.equal(createRes.status, 201)
+    // 密码对齐断言：本库存储的 passwd 必须等于 UM 密码的 PBKDF2
+    const { encodePassword } = await import('../server/dist/authx/password.js')
+    const dbm = (await import('better-sqlite3')).default(join(dataDir, 'gogs.db'))
+    const row = dbm.prepare('SELECT salt, passwd FROM user WHERE name = ?').get('drilluser')
+    assert.ok(row, 'drilluser 已开户')
+    assert.equal(row.passwd, encodePassword('Passw0rd!123', row.salt), '存储密码与 UM 密码一致')
+    dbm.close()
     // 1) UM 凭据 clone
     try {
-      execFileSync('git', ['-c', 'credential.helper=', 'clone', `http://drilluser:Passw0rd%21123@127.0.0.1:3891/root/demo.git`, join(dir, 'demo')], { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
+      execFileSync('git', ['-c', 'credential.helper=', 'clone', `http://drilluser:Passw0rd%21123@127.0.0.1:${freePort}/drilluser/demo.git`, join(dir, 'demo')], { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
     } catch (e) {
       throw new Error('clone failed: ' + ((e.stderr && e.stderr.toString()) || e.message).slice(0, 300))
     }
-    // 2) 提交并 push（UM 用户映射到 root 管理员）
+    // 2) 提交并 push（drilluser 本人身份）
     writeFileSync(join(dir, 'demo', 'a.txt'), 'hello from drill\n')
     const gitEnv = { ...process.env, GIT_AUTHOR_NAME: 'd', GIT_AUTHOR_EMAIL: 'd@d.local', GIT_COMMITTER_NAME: 'd', GIT_COMMITTER_EMAIL: 'd@d.local' }
     execFileSync('git', ['add', '.'], { cwd: join(dir, 'demo') })
     execFileSync('git', ['commit', '-m', 'c1'], { cwd: join(dir, 'demo'), env: gitEnv })
     execFileSync('git', ['-c', 'credential.helper=', 'push', 'origin', 'master'], { cwd: join(dir, 'demo'), env: gitEnv })
     // 3) 网页登录接受 UM 凭据
-    const res = await fetch('http://127.0.0.1:3891/api/web/user/sign-in', {
+    const res = await fetch(`http://127.0.0.1:${freePort}/api/web/user/sign-in`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: 'drilluser', password: 'Passw0rd!123' }),
@@ -161,7 +170,7 @@ test('端到端：子进程启动 → git clone/push → user-management 凭据 
     const doc = await res.json()
     assert.ok(!doc.error)
     // 4) 错误密码拒绝
-    const bad = await fetch('http://127.0.0.1:3891/api/web/user/sign-in', {
+    const bad = await fetch(`http://127.0.0.1:${freePort}/api/web/user/sign-in`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: 'drilluser', password: 'wrong' }),

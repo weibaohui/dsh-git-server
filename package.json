@@ -36,9 +36,10 @@
   "scripts": {
     "check": "node --check src/index.js && node --check src/runner.js && node --check client/index.js",
     "test": "node --test --test-force-exit \"test/*.test.mjs\"",
-    "sync-gogs": "node scripts/sync-gogs.mjs",
     "build:client": "node scripts/build-client.mjs",
-    "prepublishOnly": "npm run sync-gogs && npm run build:client && npm run check && npm test"
+    "prepublishOnly": "npm run sync-gogs && npm run build:client && npm run check && npm test",
+    "build:server": "tsc -p server/tsconfig.json",
+    "sync-server": "node scripts/sync-server.mjs"
   },
   "keywords": [
     "dsh",
@@ -61,5 +62,14 @@
   },
   "engines": {
     "node": ">=22.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/busboy": "^1.5.4",
+    "@types/ini": "^4.1.1",
+    "@types/node": "^22.10.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/ssh2": "^1.15.6",
+    "typescript": "^5.7.0"
   }
 }

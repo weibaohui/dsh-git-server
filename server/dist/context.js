@@ -460,17 +460,9 @@ export function escapePound(str) {
 }
 // ---------------------------------------------------------------- auth
 /** dsh 桥运行时：启用状态 + UM 凭据映射到的本库管理员（懒解析，缓存实例）。 */
-let umMappedCache = null;
 function umRuntime() {
     const enabled = umBridge.umAuthEnabled();
-    const asName = process.env.DSH_UM_AS_USER || 'root';
-    if (!enabled)
-        return { enabled, umCheck: () => ({ ok: false }), mappedUser: () => null };
-    if (!umMappedCache || umMappedCache.name !== asName) {
-        umMappedCache = { name: asName, user: db.getUserByUsername(asName) ?? db.getFirstAdmin() ?? null };
-    }
-    const mapped = umMappedCache.user;
-    return { enabled, umCheck: umBridge.umCheck, mappedUser: () => mapped ?? db.getFirstAdmin() ?? null };
+    return { enabled, umCheck: umBridge.umCheck, ensureAlignedUser: umBridge.ensureAlignedUser };
 }
 export function authenticateUserByBasic(header) {
     const parts = header.split(' ');
@@ -481,14 +473,14 @@ export function authenticateUserByBasic(header) {
     if (user && verifyPassword(passwd, user.salt, user.passwd)) {
         return { user, isBasic: true };
     }
-    // dsh 桥：user-management 用户库（见 authx/um.ts）——UM 凭据映射到管理员账号
+    // dsh 桥：user-management 用户库（见 authx/um.ts）——同名账户拉通
     const um = umRuntime();
     if (um.enabled) {
         const check = um.umCheck(uname, passwd);
         if (check.ok) {
-            const mapped = um.mappedUser();
-            if (mapped)
-                return { user: mapped, isBasic: true };
+            const aligned = um.ensureAlignedUser(uname, passwd);
+            if (aligned)
+                return { user: aligned, isBasic: true };
         }
     }
     // try token in either field

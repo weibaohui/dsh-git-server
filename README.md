@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@weibaohui/dsh-git-server.svg)](https://www.npmjs.com/package/@weibaohui/dsh-git-server)
 [![license](https://img.shields.io/npm/l/@weibaohui/dsh-git-server.svg)](https://github.com/weibaohui/dsh-git-server/blob/main/LICENSE)
 
-dsh 插件 · Git 服务器：内嵌 [ts-gogs](https://github.com/weibaohui/ts-gogs)（Gogs 的 TypeScript 1:1 平替），把一套**完整的自助 Git 服务**装进 dsh——HTTP clone/push、网页端、issue、PR、wiki、发版、webhook、组织与团队。全部管理在 dsh 设置窗口一站式完成，可选复用 [user-management](https://github.com/weibaohui/user-management) 的用户名密码。
+dsh 插件 · Git 服务器：内嵌 [ts-gogs](https://github.com/weibaohui/ts-gogs)（Gogs 的 TypeScript 1:1 平替，源码级融合），把一套**完整的自助 Git 服务**装进 dsh——HTTP clone/push、网页端、issue、PR、wiki、发版、webhook、组织与团队。全部管理在 dsh 设置窗口一站式完成；**账户唯一来源 = user-management**，dsh 用户名密码即 Git 凭据，自动同名开户、密码自动跟随。
 
 ## 这是干什么的
 
@@ -47,7 +47,7 @@ dsh plugin add github:weibaohui/dsh-git-server
 ## 快速上手
 
 1. 设置页勾选**启用 Git 服务器**，保存（默认 `127.0.0.1:3400`）；
-2. 点内嵌界面的**登录**：`user-management` 模式下直接用 dsh 的用户名密码；`gogs` 模式用管理员 `root` + 设置页展示的密码；
+2. 点内嵌界面的**登录**：直接用 dsh 的用户名密码（user-management 账号自动同名开户、密码同步）——打开内嵌界面时通常已自动登录；
 3. 新建仓库（设置页表单或网页端），然后照常开发：
 
 ```sh
@@ -65,22 +65,21 @@ cd drill-repo && git checkout -b feature && ... && git push origin feature
 | 监听地址 | `127.0.0.1` | `0.0.0.0` = 局域网可访问（git 操作与网页） |
 | 端口 | `3400` | 1024–65535；git remote 与网页都走这里，网页也可走 dsh 反代路径 |
 | 数据目录 | `~/.dsh/dsh-git-server/data` | 仓库/数据库/日志（支持 `~`）；改目录=迁移整套数据 |
-| 账号体系 | `gogs` | `gogs` 或 `user-management`，见下节 |
-| 管理员密码 | 自动生成 | 本库管理员 `root` 的密码，设置页可见可轮换（轮换重启后生效） |
-| 开放网页注册 | 开 | 关闭后仅管理员能建号 |
+| 管理员密码 | 自动生成 | 兜底管理员 `root` 的密码（仅在 user-management 用户库缺失时作为紧急登录），设置页可见可轮换 |
 
 配置存于 `~/.dsh/settings.yaml` 的 `dsh-git-server` 节，3 秒热生效（变更触发子进程重启，毫秒级停顿）。
 
-## 认证：gogs 账号 or user-management 账号
+## 账户：唯一来源 = user-management
 
-两种账号体系，设置页一键切换：
+dsh-git-server 不设独立账号体系。网页登录、git HTTP Basic、API Basic 的凭据都由 [user-management](https://github.com/weibaohui/user-management) 的用户库验证：
 
-- **gogs 账号**（默认）：ts-gogs 本库独立账号 + 令牌。管理员 `root` 密码首次启动自动生成（设置页可见），网页注册开放，普通账号自行注册；
-- **user-management 账号**：git clone/push 与网页登录直接接受 user-management 的用户名密码（scrypt 口令跨仓复刻验证，映射为本库管理员）。注意事项：
-  - 开启两步验证（TOTP）的账号不可用——登录无处输入动态码，这类用户请用 gogs 账号模式；
-  - 被禁用的账号同样拒绝；密码修改后旧凭据最多再有效 5 分钟（判定缓存）；
-  - user-management 未安装或用户库缺失时**自动回退 gogs 账号模式**，不会把人锁死在外面；
-  - `user-management` 模式下内嵌界面**免登录**：代理自动注入会话，打开即是已登录状态。
+- **同名开户**：UM 用户首次通过验证时，自动创建同名同角色的 Git 账号（UM admin → Git 管理员）；
+- **密码跟随**：Git 账号的存储密码在每次验证时与 UM 密码对齐——UM 侧改密后，下次登录自动跟随，网页/git/API 全场景一致；
+- **注册关闭**：网页注册强制禁用，账号只能由 user-management 管理（UM 管理员在 dsh 的用户管理界面建号）；
+- **自动登录**：从 dsh 打开内嵌界面时按 dsh 会话注入对应身份，打开即已登录；
+- **回退保护**：user-management 用户库缺失/损坏时，回退到兜底管理员 `root`（设置页展示的密码），不会把人锁死在外面。
+
+> ⚠️ UM 侧删除用户不会级联删除 Git 账号（该账号的仓库历史仍保留）；如需彻底清理请在内嵌管理界面手动处理。
 
 ## 架构：子进程 + 反向代理，为什么不做源码级融合
 
@@ -90,6 +89,8 @@ cd drill-repo && git checkout -b feature && ... && git push origin feature
 - **Git 协议需要独立端点**：HTTP smart 协议有特殊内容类型与流式语义，且 CLI 凭据模型与网页门禁天然不同——独立端口是 GitHub/Gitea/Gogs 的共同实践，融合反而要为 git 流量单独开口；
 - **上游可追踪**：ts-gogs 有 274 例对上游 gogs 的交叉验证测试；源码级深度改造会让后续同步上游修复变成人力工程；
 - **代理很薄**：一个 `http.request` 管道（约 60 行），无协议改写；界面统一靠 ts-gogs 原生子路径能力（`EXTERNAL_URL` 子路径 → 链接/资产全带前缀），非运行时 hack。
+
+同时本包**直接持有 ts-gogs 源码拷贝**（`server/` 目录，`npm run sync-server` 从上游初始化/更新）：dsh 场景的定制以「减法」方式做在拷贝里——已做：移除安装向导依赖、禁用系统 authorized_keys 写入、注册强制关闭、账户单一来源桥；后续定制（如界面精简、仓库模板）继续在拷贝内演进，上游安全修复按需手工合入。
 
 内嵌界面的**登录摩擦**已通过代理自动注入会话解决（user-management 模式下打开即登录态），不再构成融合的理由。
 
@@ -101,12 +102,12 @@ cd drill-repo && git checkout -b feature && ... && git push origin feature
 ## 开发
 
 ```sh
-npm run sync-gogs     # 从 ../ts-gogs 同步构建产物到 vendor/ts-gogs
+npm run build:server  # 构建 server/（拷贝的 ts-gogs 源码）
 npm run build:client  # 重新打包设置页 client bundle
-npm test              # 合约测试（含真实子进程端到端：clone/push/UM 凭据）
+npm test              # 合约测试（含真实子进程端到端：clone/push/UM 凭据/密码对齐）
 ```
 
-运行时依赖（better-sqlite3/ssh2 等）由本包 `dependencies` 提供；缺失时启动自检会自动安装。
+server/ 内是 ts-gogs 源码拷贝（含构建产物 dist/），运行时依赖（better-sqlite3/ssh2 等）由本包 `dependencies` 提供；缺失时启动自检会自动安装。
 
 ## License
 

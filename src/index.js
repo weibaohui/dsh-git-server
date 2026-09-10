@@ -265,6 +265,7 @@ module.exports = {
       }
 
       state.fingerprint = fp // 先记账防并发重建；失败时错误落在 state.error
+      umGogsSession = null
       if (state.handle) { await state.handle.stop(); state.handle = null }
       try {
         // 依赖自检/自动安装的日志始终可见；子进程自身输出仅在 verbose 模式转发
@@ -355,43 +356,70 @@ module.exports = {
     // ── 完整界面反代：/dsh-git-server/ui/* → 内嵌 ts-gogs ────────────────
     // 浏览器统一从 dsh 访问 git 网页端（dsh 门禁认证），不再直连插件端口。
     // git 客户端仍可直连 <host>:<port>（CLI 凭据简单，走门禁反而不兼容）。
-    function proxyUi(req, res) {
+    // user-management 模式下代理自动注入 gogs 会话（root 已是 UM 凭据的映射
+    // 身份）——内嵌界面免二次登录；用户自己登录过则保留其会话。
+    let umGogsSession = null // { pw, cookie } — 子进程重启后由 reconcile 重置
+    async function gogsSessionCookie(cfg, reqCookie) {
+      if (cfg.authMode !== 'user-management') return null
+      if (reqCookie && /i_like_gogs=/.test(reqCookie)) return null // 用户有自己的会话，不覆盖
+      if (umGogsSession && umGogsSession.pw === cfg.adminPassword) return umGogsSession.cookie
+      try {
+        const res = await fetch(`http://127.0.0.1:${cfg.port}/api/web/user/sign-in`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'root', password: cfg.adminPassword }),
+        })
+        const m = (res.headers.get('set-cookie') || '').match(/i_like_gogs=[^;]+/)
+        if (!m) return null
+        umGogsSession = { pw: cfg.adminPassword, cookie: m[0] }
+        return umGogsSession.cookie
+      } catch {
+        return null
+      }
+    }
+
+    // ── 完整界面反代：/dsh-git-server/ui/* → 内嵌 ts-gogs ────────────────
+    // 浏览器统一从 dsh 访问 git 网页端（dsh 门禁认证），不再直连插件端口。
+    // git 客户端仍可直连 <host>:<port>（CLI 凭据简单，走门禁反而不兼容）。
+    // user-management 模式下自动注入 gogs 会话（root 是 UM 凭据的映射身份），
+    // 内嵌界面免二次登录；用户自己登录过则保留其会话。
+    async function proxyUi(req, res) {
       const cfg = engine.normalizeConfig(effective())
-      const childPort = cfg.port
       const url = new URL(req.url || '/', 'http://dsh.local')
       const targetPath = url.pathname + url.search // 已带 /dsh-git-server/ui 前缀（= 子进程子路径）
+      const sess = await gogsSessionCookie(cfg, req.headers.cookie)
       const headers = { ...req.headers }
-      delete headers.host
+      headers.host = `127.0.0.1:${cfg.port}`
       delete headers['content-length']
       delete headers.connection
-      const upstream = fetch(`http://127.0.0.1:${childPort}${targetPath}`, {
-        method: req.method,
-        headers,
-        body: ['GET', 'HEAD'].includes(req.method) ? undefined : req,
-        duplex: 'half',
-        redirect: 'manual',
-      })
-      upstream.then((r) => {
-        const resHeaders = {}
-        r.headers.forEach((v, k) => {
-          if (['content-encoding', 'transfer-encoding', 'connection', 'content-security-policy', 'x-frame-options'].includes(k.toLowerCase())) return
-          resHeaders[k] = v
+      if (sess) headers.cookie = headers.cookie ? headers.cookie + '; ' + sess : sess
+
+      await new Promise((resolve) => {
+        const up = require('node:http').request(
+          { host: '127.0.0.1', port: cfg.port, path: targetPath, method: req.method, headers },
+          (ur) => {
+            const outHeaders = {}
+            for (const [k, v] of Object.entries(ur.headers)) {
+              if (['connection', 'transfer-encoding', 'content-security-policy', 'x-frame-options'].includes(k)) continue
+              outHeaders[k] = v
+            }
+            res.writeHead(ur.statusCode || 502, outHeaders)
+            ur.on('data', (c) => { if (!res.write(c)) ur.pause() })
+            res.on('drain', () => ur.resume())
+            ur.on('end', () => res.end())
+            ur.on('error', () => { try { res.end() } catch {} })
+            resolve()
+          },
+        )
+        up.on('error', (e) => {
+          try {
+            res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('dsh-git-server: Git 服务器未运行 — 请在设置里启用')
+          } catch {}
+          resolve()
         })
-        res.writeHead(r.status, resHeaders)
-        if (r.body) {
-          const reader = r.body.getReader()
-          const pump = () => reader.read().then(({ done, value }) => {
-            if (done) { res.end(); return }
-            res.write(Buffer.from(value))
-            pump()
-          }).catch(() => { try { res.end() } catch {} })
-          pump()
-        } else res.end()
-      }).catch((e) => {
-        try {
-          res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
-          res.end('dsh-git-server: Git 服务器未运行 — 请在设置里启用')
-        } catch {}
+        req.on('error', () => up.destroy())
+        req.pipe(up)
       })
     }
 
@@ -400,7 +428,7 @@ module.exports = {
         webServer.register({
           kind: 'prefix',
           path: engine.UI_SUBPATH,
-          handler: proxyUi,
+          handler: (req, res) => { proxyUi(req, res).catch((e) => logger.error('dsh-git-server: proxy: ' + ((e && e.message) || e))) },
         })
       }, 'dsh-git-server: ui proxy route')
       ctx.effect(() => {

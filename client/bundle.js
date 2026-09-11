@@ -141,6 +141,16 @@ window.__ModuleLoader__.load({
     .dgs-crumb:hover{color:var(--dsw-alias-state-business-primary)}
     .dgs-crumb.cur{color:var(--dsw-alias-label-primary);cursor:default;font-weight:500}
     .dgs-issue{border-bottom:1px solid var(--dsw-alias-border-l1);padding:10px 4px}
+    .dgs-issue-layout{display:flex;gap:18px;align-items:flex-start}
+    .dgs-issue-main{flex:1;min-width:0}
+    .dgs-issue-side{width:230px;flex:none}
+    .dgs-side-block{border-bottom:1px solid var(--dsw-alias-border-l2);padding:10px 0}
+    .dgs-side-title{font-weight:700;font-size:12.5px;margin-bottom:4px}
+    .dgs-settings-layout{display:flex;gap:20px;align-items:flex-start}
+    .dgs-settings-nav{width:180px;flex:none;border-right:1px solid var(--dsw-alias-border-l2);padding-right:12px}
+    .dgs-settings-nav .item{display:block;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--dsw-alias-label-secondary)}
+    .dgs-settings-nav .item.active{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-weight:600}
+    .dgs-settings-nav .item:hover{background:var(--dsw-alias-interactive-bg-hover)}
     .dgs-comment{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:10px 12px;margin:8px 0}
     .dgs-empty{color:var(--dsw-alias-label-tertiary);text-align:center;padding:40px 0;font-size:13px}
     .dgs-err{color:var(--dsw-alias-state-error-primary);font-size:13px}
@@ -259,7 +269,8 @@ window.__ModuleLoader__.load({
             h('button', { className: 'dgs-btn ghost', onClick: () => {
               try { navigator.clipboard.writeText(cloneUrl) } catch {}
               setCopied(true); setTimeout(() => setCopied(false), 1600)
-            } }, copied ? t('copied') : t('copy'))) : null) : null,
+            } }, copied ? t('copied') : t('copy')),
+            h('a', { className: 'dgs-btn ghost', href: `/dsh-git-server/api/dsh/repos/${repo.owner}/${repo.name}/archive/${encodeURIComponent(rev || 'master')}.zip`, download: `${repo.name}-${rev}.zip` }, '⭳ 下载')) : null) : null,
         h('div', { className: 'dgs-tabs' },
           ['files', 'issues', 'pulls', 'wiki', 'releases', 'settings'].map((k) =>
             h('button', { key: k, className: 'dgs-tab' + (tab === k ? ' active' : ''), onClick: () => setTab(k) }, t(k)))),
@@ -332,7 +343,8 @@ window.__ModuleLoader__.load({
           h('tr', { key: e.path, style: { cursor: 'pointer' }, onClick: () => openEntry(e) },
             h('td', { style: { width: 24 } }, h('span', { className: 'dgs-ico' }, e.type === 'dir' || e.type === 'tree' ? '📁' : '📄')),
             h('td', null, h('div', null, e.name),
-              e.last ? h('div', { className: 'dgs-sub' }, (e.last.msg || '') + ' · ' + fmtDate(e.last.date)) : null),
+              e.last ? h('div', { className: 'dgs-sub' }, (e.last.msg || '')) : null,
+              e.last ? h('div', { className: 'dgs-sub', style: { marginTop: 1 } }, timeAgo(e.last.date)) : null),
             h('td', { className: 'dgs-sub', style: { textAlign: 'right', width: 70 } }, e.type === 'blob' ? fmtSize(e.size) : '')))
         const table = entries.length === 0
           ? h('div', { className: 'dgs-empty' }, t('emptyDir'))
@@ -346,12 +358,115 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function IssuesArea({ repo, t }) {
+      const [sub, setSub] = useState('list')
+      const [labelJump, setLabelJump] = useState(null)
+      return h('div', null,
+        h('div', { className: 'dgs-subtabs' },
+          [['list', '工单'], ['labels', '标签'], ['milestones', '里程碑']].map(([k, label]) =>
+            h('button', { key: k, className: 'dgs-subtab' + (sub === k ? ' active' : ''), onClick: () => setSub(k) }, label))),
+        sub === 'list' && h(Issues, { repo, t, presetLabel: labelJump, onPresetDone: () => setLabelJump(null) }),
+        sub === 'labels' && h(LabelsManage, { repo, t, onFilterLabel: (lid) => { setLabelJump(lid); setSub('list') } }),
+        sub === 'milestones' && h(MilestonesManage, { repo, t }))
+    }
+
+    function Issues({ repo, t, presetLabel, onPresetDone }) {
+      const [state, setState] = useState('open')
+      const [flt, setFlt] = useState({ label: '', milestone: '', assignee: '' })
+      useEffect(() => {
+        if (presetLabel) { setFlt((f) => ({ ...f, label: String(presetLabel) })); onPresetDone && onPresetDone() }
+      }, [presetLabel])
+      const [sort, setSort] = useState('latest')
+      const [search, setSearch] = useState('')
+      const [list, setList] = useState(null)
+      const [meta, setMeta] = useState({ labels: [], milestones: [], collabs: [] })
+      const [creating, setCreating] = useState(false)
+      const [openIdx, setOpenIdx] = useState(null)
+      const reload = useCallback(() => {
+        setList(null)
+        const q = new URLSearchParams({ state, sort })
+        if (flt.label) q.set('label', flt.label)
+        if (flt.milestone) q.set('milestone', flt.milestone)
+        if (flt.assignee) q.set('assignee', flt.assignee)
+        if (search.trim()) q.set('search', search.trim())
+        api('GET', `/dsh/repos/${repo.owner}/${repo.name}/issues?` + q).then((d) => setList(Array.isArray(d) ? d : (d.issues || [])))
+      }, [repo.owner, repo.name, state, flt, sort, search])
+      useEffect(reload, [reload])
+      useEffect(() => {
+        api('GET', `/dsh/repos/${repo.owner}/${repo.name}/labels`).then((d) => setMeta((m) => ({ ...m, labels: Array.isArray(d) ? d : [] })))
+        api('GET', `/dsh/repos/${repo.owner}/${repo.name}/milestones`).then((d) => setMeta((m) => ({ ...m, milestones: Array.isArray(d) ? d : [] })))
+        api('GET', `/dsh/repos/${repo.owner}/${repo.name}/collaborators`).then((d) => setMeta((m) => ({ ...m, collabs: Array.isArray(d) ? d : [] })))
+      }, [repo.owner, repo.name])
+      if (openIdx !== null) return h(IssueDetail, { repo, idx: openIdx, t, onBack: () => { setOpenIdx(null); reload() } })
+      const fltSel = (key, items, blank) => h('select', {
+        className: 'dgs-input', style: { maxWidth: 150, flex: 'none', width: 'auto', padding: '5px 8px' },
+        value: flt[key], onChange: (e) => setFlt({ ...flt, [key]: e.target.value }),
+      }, h('option', { value: '' }, blank),
+        items.map((x) => h('option', { key: x.id || x.name, value: String(x.id || x.name) }, x.name)))
+      return h('div', null,
+        h('div', { className: 'dgs-row', style: { margin: '8px 0 12px' } },
+          h('button', { className: 'dgs-btn ghost', onClick: () => setState('open') }, t('openState')),
+          h('button', { className: 'dgs-btn ghost', onClick: () => setState('closed') }, t('closedState')),
+          h('span', { style: { flex: 1 } }),
+          h('button', { className: 'dgs-btn', onClick: () => setCreating(!creating) }, t('issueNew'))),
+        creating ? h(NewIssue, { repo, t, onDone: () => { setCreating(false); reload() } }) : null,
+        h('div', { className: 'dgs-row', style: { margin: '0 0 12px' } },
+          fltSel('label', meta.labels, '标签'),
+          fltSel('milestone', meta.milestones, '里程碑'),
+          fltSel('assignee', meta.collabs, '负责人'),
+          h('select', { className: 'dgs-input', style: { maxWidth: 150, flex: 'none', width: 'auto', padding: '5px 8px' }, value: sort, onChange: (e) => setSort(e.target.value) },
+            [['latest', '最新'], ['oldest', '最旧'], ['recentupdate', '最近更新'], ['leastupdate', '最久未更新'], ['mostcomment', '最多评论'], ['leastcomment', '最少评论']].map(([v, label]) =>
+              h('option', { key: v, value: v }, '排序: ' + label))),
+          h('input', { className: 'dgs-input', style: { maxWidth: 180, flex: 'none' }, placeholder: '搜索标题/内容', value: search, onChange: (e) => setSearch(e.target.value) }),
+          (flt.label || flt.milestone || flt.assignee || search) ? h('button', { className: 'dgs-btn ghost', onClick: () => { setFlt({ label: '', milestone: '', assignee: '' }); setSearch('') } }, '清除') : null),
+        list === null ? h('div', { className: 'dgs-empty' }, t('loading'))
+          : list.length === 0 ? h('div', { className: 'dgs-empty' }, t('noIssues'))
+          : h('div', null, list.map((i) => issueRow(i)))
+      )
+
+      function issueRow(i) {
+        const badge = h('span', { className: 'dgs-badge' + (i.state === 'open' ? ' ok' : ' closed') }, '#' + i.number)
+        const title = h('span', { style: { fontWeight: 500 } }, i.title)
+        const labels = (i.labels || []).map((l) =>
+          h('span', { key: l.id, className: 'dgs-badge', style: { background: (l.color || '#70c24a') + '33', borderColor: l.color || '#70c24a' } }, l.name))
+        const meta = h('div', { className: 'dgs-row', style: { marginTop: 4, gap: 6 } },
+          h('span', { className: 'dgs-sub' }, (i.user || '') + ' · ' + timeAgo(i.updatedAt) + ' · ' + (i.comments || 0) + ' ' + t('comment')),
+          i.milestone ? h('span', { className: 'dgs-badge' }, '◆ ' + i.milestone.title) : null,
+          i.assignee ? h('span', { className: 'dgs-badge' }, '@' + i.assignee) : null)
+        return h('div', {
+          key: i.number, className: 'dgs-issue', style: { cursor: 'pointer' },
+          onClick: () => setOpenIdx(i.number),
+        }, h('div', { className: 'dgs-row' }, badge, title, h('span', { style: { flex: 1 } }), labels), meta)
+      }
+    }
+
+    function NewIssue({ repo, t, onDone }) {
+      const [title, setTitle] = useState('')
+      const [body, setBody] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [err, setErr] = useState('')
+      return h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
+        h('div', { className: 'dgs-row', style: { marginBottom: 8 } },
+          h('input', { className: 'dgs-input', placeholder: t('issueTitle'), value: title, onChange: (e) => setTitle(e.target.value) })),
+        h('textarea', { className: 'dgs-input', placeholder: t('issueBody'), value: body, onChange: (e) => setBody(e.target.value) }),
+        err ? h('div', { className: 'dgs-err' }, err) : null,
+        h('div', { className: 'dgs-row', style: { marginTop: 8 } },
+          h('button', { className: 'dgs-btn', disabled: busy || !title.trim(),
+            onClick: async () => {
+              setBusy(true); setErr('')
+              const d = await api('POST', `/repos/${repo.owner}/${repo.name}/issues`, { title, body })
+              setBusy(false)
+              d.ok ? onDone() : setErr(d.error || 'failed')
+            } }, t('submit'))))
+    }
+
     function Commits({ repo, rev, t }) {
       const [list, setList] = useState(null)
       const [sel, setSel] = useState(null)
       const [page, setPage] = useState(1)
       const [full, setFull] = useState(false)
-      useEffect(() => { setPage(1) }, [rev])
+      const [q, setQ] = useState('')
+      useEffect(() => { setPage(1); setQ('') }, [rev])
       useEffect(() => {
         setList(null)
         api('GET', `/repos/${repo.owner}/${repo.name}/commits?ref=${encodeURIComponent(rev)}&page=${page}&pageSize=30`)
@@ -364,13 +479,18 @@ window.__ModuleLoader__.load({
       if (sel) return h(CommitDetail, { repo, sha: sel, t, onBack: () => setSel(null) })
       if (list === null) return h('div', { className: 'dgs-empty' }, t('loading'))
       if (list.length === 0) return h('div', { className: 'dgs-empty' }, t('emptyDir'))
+      const shown = q.trim() ? list.filter((c) => (c.message || '').toLowerCase().includes(q.trim().toLowerCase()) || (c.author || '').toLowerCase().includes(q.trim().toLowerCase())) : list
       return h('div', null,
+        h('div', { className: 'dgs-row', style: { margin: '0 0 10px' } },
+          h('input', { className: 'dgs-input', style: { maxWidth: 260, flex: 'none' }, placeholder: '搜索提交历史', value: q, onChange: (e) => setQ(e.target.value) })),
+        shown.length === 0 ? h('div', { className: 'dgs-empty' }, '—') : null,
         h('table', { className: 'dgs-table' },
-          h('tbody', null, list.map((c, i) =>
+          h('tbody', null, shown.map((c, i) =>
             h('tr', { key: i, style: { cursor: 'pointer' }, onClick: () => setSel(c.sha) },
               h('td', null, h('div', { style: { fontWeight: 500 } }, (c.message || '').split('\n')[0]),
-                h('div', { className: 'dgs-sub' }, c.author + ' · ' + fmtDate(c.date))),
-              h('td', { className: 'dgs-sub', style: { textAlign: 'right' } }, (c.sha || '').slice(0, 10)))))),
+                h('div', { className: 'dgs-sub' }, c.author)),
+              h('td', { className: 'dgs-sub', style: { textAlign: 'right', whiteSpace: 'nowrap' } }, (c.sha || '').slice(0, 10)),
+              h('td', { className: 'dgs-sub', style: { textAlign: 'right', whiteSpace: 'nowrap', width: 100 } }, timeAgo(c.date)))))),
         h('div', { className: 'dgs-row', style: { marginTop: 10, justifyContent: 'center' } },
           h('button', { className: 'dgs-btn ghost', disabled: page <= 1, onClick: () => setPage(page - 1) }, '‹ 较新'),
           h('span', { className: 'dgs-sub' }, '第 ' + page + ' 页'),
@@ -439,6 +559,7 @@ window.__ModuleLoader__.load({
     }
 
     function Branches({ repo, t, onNewPR }) {
+      const [view, setView] = useState('overview')
       const [list, setList] = useState(null)
       const [tags, setTags] = useState(null)
       const [rels, setRels] = useState([])
@@ -451,133 +572,54 @@ window.__ModuleLoader__.load({
         api('GET', `/dsh/repos/${repo.owner}/${repo.name}/releases`).then((d) => setRels(Array.isArray(d) ? d : (d.data || [])))
       }, [repo.owner, repo.name])
       if (list === null) return h('div', { className: 'dgs-empty' }, t('loading'))
+      const tabBtn = (k, label) => h('button', { className: 'dgs-subtab' + (view === k ? ' active' : ''), onClick: () => setView(k) }, label)
+      const active = list.filter((b) => b.name !== def)
       return h('div', null,
-        h('table', { className: 'dgs-table' },
-          h('tbody', null, list.map((b) =>
-            h('tr', { key: b.name },
-              h('td', { style: { fontWeight: 500 } },
-                b.name,
-                b.name === def ? h('span', { className: 'dgs-badge ok', style: { marginLeft: 8 } }, '默认') : null),
-              h('td', { className: 'dgs-sub', style: { textAlign: 'right' } },
-                (b.sha || '').slice(0, 10),
-                b.name !== def ? h('button', { className: 'dgs-btn ghost', style: { marginLeft: 8, padding: '2px 8px' }, onClick: () => onNewPR && onNewPR(b.name, def) }, '+ PR') : null,
-                b.name !== def ? h('button', { className: 'dgs-btn danger', style: { marginLeft: 4, padding: '2px 8px' }, onClick: async () => {
-                  if (!confirm('删除分支 ' + b.name + ' ？')) return
-                  await api('DELETE', `/repos/${repo.owner}/${repo.name}/branches/${encodeURIComponent(b.name)}`)
-                  reload()
-                } }, '删') : null))))),
-        h('div', { style: { fontWeight: 700, margin: '18px 0 8px' } }, '标签'),
-        tags === null ? h('div', { className: 'dgs-empty' }, t('loading'))
-          : tags.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
-          : h('table', { className: 'dgs-table' },
-              h('tbody', null, tags.map((tg) => {
-                const released = rels.some((r) => r.tag === tg.name)
-                return h('tr', { key: tg.name },
+        h('div', { className: 'dgs-subtabs' }, tabBtn('overview', '概况'), tabBtn('all', '所有分支')),
+        view === 'overview' ? h('div', null,
+          h('div', { className: 'dgs-card', style: { marginBottom: 12 } },
+            h('div', { style: { fontWeight: 700, marginBottom: 8 } }, '默认分支'),
+            h('div', { className: 'dgs-row' },
+              h('span', { className: 'dgs-badge' }, def || 'master'),
+              h('span', { className: 'dgs-sub', style: { flex: 1 } }, '由 Gogs 更新'),
+              h('button', { className: 'dgs-btn ghost', onClick: () => setView('all') }, '更改默认分支'))),
+          h('div', { className: 'dgs-card' },
+            h('div', { style: { fontWeight: 700, marginBottom: 8 } }, '活跃分支'),
+            active.length === 0 ? h('div', { className: 'dgs-sub' }, '—')
+              : active.map((b) => h('div', { key: b.name, className: 'dgs-row', style: { padding: '4px 0' } },
+                  h('a', { className: 'dgs-name', style: { cursor: 'pointer' }, onClick: () => onNewPR && onNewPR(b.name, def) }, b.name),
+                  h('span', { className: 'dgs-sub', style: { flex: 1 } }, '由 ' + (b.author || '') + ' 更新'),
+                  h('span', { className: 'dgs-sub' }, (b.sha || '').slice(0, 10))))))
+        : h('div', null,
+            h('table', { className: 'dgs-table' },
+              h('tbody', null, list.map((b) =>
+                h('tr', { key: b.name },
                   h('td', { style: { fontWeight: 500 } },
-                    '◎ ' + tg.name,
-                    released ? h('span', { className: 'dgs-badge ok', style: { marginLeft: 8 } }, '已发版') : null),
-                  h('td', { className: 'dgs-sub' }, tg.msg || ''),
-                  h('td', { className: 'dgs-sub', style: { textAlign: 'right', whiteSpace: 'nowrap' } },
-                    (tg.sha || '') + ' · ' + fmtDate(tg.date)))
-              }))))
-    }
-
-    function IssuesArea({ repo, t }) {
-      const [sub, setSub] = useState('list')
-      return h('div', null,
-        h('div', { className: 'dgs-subtabs' },
-          [['list', '工单'], ['labels', '标签'], ['milestones', '里程碑']].map(([k, label]) =>
-            h('button', { key: k, className: 'dgs-subtab' + (sub === k ? ' active' : ''), onClick: () => setSub(k) }, label))),
-        sub === 'list' && h(Issues, { repo, t }),
-        sub === 'labels' && h(LabelsManage, { repo, t }),
-        sub === 'milestones' && h(MilestonesManage, { repo, t }))
-    }
-
-    function Issues({ repo, t }) {
-      const [state, setState] = useState('open')
-      const [flt, setFlt] = useState({ label: '', milestone: '', assignee: '' })
-      const [sort, setSort] = useState('latest')
-      const [search, setSearch] = useState('')
-      const [list, setList] = useState(null)
-      const [meta, setMeta] = useState({ labels: [], milestones: [], collabs: [] })
-      const [creating, setCreating] = useState(false)
-      const [openIdx, setOpenIdx] = useState(null)
-      const reload = useCallback(() => {
-        setList(null)
-        const q = new URLSearchParams({ state, sort })
-        if (flt.label) q.set('label', flt.label)
-        if (flt.milestone) q.set('milestone', flt.milestone)
-        if (flt.assignee) q.set('assignee', flt.assignee)
-        if (search.trim()) q.set('search', search.trim())
-        api('GET', `/dsh/repos/${repo.owner}/${repo.name}/issues?` + q).then((d) => setList(Array.isArray(d) ? d : (d.issues || [])))
-      }, [repo.owner, repo.name, state, flt, sort, search])
-      useEffect(reload, [reload])
-      useEffect(() => {
-        api('GET', `/dsh/repos/${repo.owner}/${repo.name}/labels`).then((d) => setMeta((m) => ({ ...m, labels: Array.isArray(d) ? d : [] })))
-        api('GET', `/dsh/repos/${repo.owner}/${repo.name}/milestones`).then((d) => setMeta((m) => ({ ...m, milestones: Array.isArray(d) ? d : [] })))
-        api('GET', `/dsh/repos/${repo.owner}/${repo.name}/collaborators`).then((d) => setMeta((m) => ({ ...m, collabs: Array.isArray(d) ? d : [] })))
-      }, [repo.owner, repo.name])
-      if (openIdx !== null) return h(IssueDetail, { repo, idx: openIdx, t, onBack: () => { setOpenIdx(null); reload() } })
-      const fltSel = (key, items, blank) => h('select', {
-        className: 'dgs-input', style: { maxWidth: 150, flex: 'none', width: 'auto', padding: '5px 8px' },
-        value: flt[key], onChange: (e) => setFlt({ ...flt, [key]: e.target.value }),
-      }, h('option', { value: '' }, blank),
-        items.map((x) => h('option', { key: x.id || x.name, value: String(x.id || x.name) }, x.name)))
-      return h('div', null,
-        h('div', { className: 'dgs-row', style: { margin: '8px 0 12px' } },
-          h('button', { className: 'dgs-btn ghost', onClick: () => setState('open') }, t('openState')),
-          h('button', { className: 'dgs-btn ghost', onClick: () => setState('closed') }, t('closedState')),
-          h('span', { style: { flex: 1 } }),
-          h('button', { className: 'dgs-btn', onClick: () => setCreating(!creating) }, t('issueNew'))),
-        creating ? h(NewIssue, { repo, t, onDone: () => { setCreating(false); reload() } }) : null,
-        h('div', { className: 'dgs-row', style: { margin: '0 0 12px' } },
-          fltSel('label', meta.labels, '标签'),
-          fltSel('milestone', meta.milestones, '里程碑'),
-          fltSel('assignee', meta.collabs, '负责人'),
-          h('select', { className: 'dgs-input', style: { maxWidth: 150, flex: 'none', width: 'auto', padding: '5px 8px' }, value: sort, onChange: (e) => setSort(e.target.value) },
-            [['latest', '最新'], ['oldest', '最旧'], ['recentupdate', '最近更新'], ['leastupdate', '最久未更新'], ['mostcomment', '最多评论'], ['leastcomment', '最少评论']].map(([v, label]) =>
-              h('option', { key: v, value: v }, '排序: ' + label))),
-          h('input', { className: 'dgs-input', style: { maxWidth: 180, flex: 'none' }, placeholder: '搜索标题/内容', value: search, onChange: (e) => setSearch(e.target.value) }),
-          (flt.label || flt.milestone || flt.assignee || search) ? h('button', { className: 'dgs-btn ghost', onClick: () => { setFlt({ label: '', milestone: '', assignee: '' }); setSearch('') } }, '清除') : null),
-        list === null ? h('div', { className: 'dgs-empty' }, t('loading'))
-          : list.length === 0 ? h('div', { className: 'dgs-empty' }, t('noIssues'))
-          : h('div', null, list.map((i) => issueRow(i)))
+                    b.name,
+                    b.name === def ? h('span', { className: 'dgs-badge ok', style: { marginLeft: 8 } }, '默认') : null),
+                  h('td', { className: 'dgs-sub', style: { textAlign: 'right' } },
+                    (b.sha || '').slice(0, 10),
+                    b.name !== def ? h('button', { className: 'dgs-btn ghost', style: { marginLeft: 8, padding: '2px 8px' }, onClick: () => onNewPR && onNewPR(b.name, def) }, '+ PR') : null,
+                    b.name !== def ? h('button', { className: 'dgs-btn danger', style: { marginLeft: 4, padding: '2px 8px' }, onClick: async () => {
+                      if (!confirm('删除分支 ' + b.name + ' ？')) return
+                      await api('DELETE', `/repos/${repo.owner}/${repo.name}/branches/${encodeURIComponent(b.name)}`)
+                      reload()
+                    } }, '删') : null))))),
+            h('div', { style: { fontWeight: 700, margin: '18px 0 8px' } }, '标签'),
+            tags === null ? h('div', { className: 'dgs-empty' }, t('loading'))
+              : tags.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
+              : h('table', { className: 'dgs-table' },
+                  h('tbody', null, tags.map((tg) => {
+                    const released = rels.some((r) => r.tag === tg.name)
+                    return h('tr', { key: tg.name },
+                      h('td', { style: { fontWeight: 500 } },
+                        '◎ ' + tg.name,
+                        released ? h('span', { className: 'dgs-badge ok', style: { marginLeft: 8 } }, '已发版') : null),
+                      h('td', { className: 'dgs-sub' }, tg.msg || ''),
+                      h('td', { className: 'dgs-sub', style: { textAlign: 'right', whiteSpace: 'nowrap' } },
+                        (tg.sha || '') + ' · ' + timeAgo(tg.date)))
+                  }))))
       )
-
-      function issueRow(i) {
-        const badge = h('span', { className: 'dgs-badge' + (i.state === 'open' ? ' ok' : ' closed') }, '#' + i.number)
-        const title = h('span', { style: { fontWeight: 500 } }, i.title)
-        const labels = (i.labels || []).map((l) =>
-          h('span', { key: l.id, className: 'dgs-badge', style: { background: (l.color || '#70c24a') + '33', borderColor: l.color || '#70c24a' } }, l.name))
-        const meta = h('div', { className: 'dgs-row', style: { marginTop: 4, gap: 6 } },
-          h('span', { className: 'dgs-sub' }, (i.user || '') + ' · ' + fmtDate(i.updatedAt) + ' · ' + (i.comments || 0) + ' ' + t('comment')),
-          i.milestone ? h('span', { className: 'dgs-badge' }, '◆ ' + i.milestone.title) : null,
-          i.assignee ? h('span', { className: 'dgs-badge' }, '@' + i.assignee) : null)
-        return h('div', {
-          key: i.number, className: 'dgs-issue', style: { cursor: 'pointer' },
-          onClick: () => setOpenIdx(i.number),
-        }, h('div', { className: 'dgs-row' }, badge, title, h('span', { style: { flex: 1 } }), labels), meta)
-      }
-    }
-
-    function NewIssue({ repo, t, onDone }) {
-      const [title, setTitle] = useState('')
-      const [body, setBody] = useState('')
-      const [busy, setBusy] = useState(false)
-      const [err, setErr] = useState('')
-      return h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
-        h('div', { className: 'dgs-row', style: { marginBottom: 8 } },
-          h('input', { className: 'dgs-input', placeholder: t('issueTitle'), value: title, onChange: (e) => setTitle(e.target.value) })),
-        h('textarea', { className: 'dgs-input', placeholder: t('issueBody'), value: body, onChange: (e) => setBody(e.target.value) }),
-        err ? h('div', { className: 'dgs-err' }, err) : null,
-        h('div', { className: 'dgs-row', style: { marginTop: 8 } },
-          h('button', { className: 'dgs-btn', disabled: busy || !title.trim(),
-            onClick: async () => {
-              setBusy(true); setErr('')
-              const d = await api('POST', `/repos/${repo.owner}/${repo.name}/issues`, { title, body })
-              setBusy(false)
-              d.ok ? onDone() : setErr(d.error || 'failed')
-            } }, t('submit'))))
     }
 
     function IssueDetail({ repo, idx, t, onBack }) {
@@ -610,50 +652,18 @@ window.__ModuleLoader__.load({
         setBusy(false)
         if (d && d.ok) { setEditing(false); reload() } else setMsg((d && d.error) || 'failed')
       }
-      return h('div', null,
-        h('div', { className: 'dgs-row', style: { marginBottom: 10 } },
-          h('button', { className: 'dgs-btn ghost', onClick: onBack }, t('back')),
-          h('span', { style: { fontWeight: 600 } }, '#' + idx + ' ' + issue.title),
-          h('span', { className: 'dgs-badge' + (issue.state === 'open' ? ' ok' : ' closed') }, issue.state === 'open' ? t('openState') : t('closedState')),
-          h('span', { style: { flex: 1 } }),
-          h('button', { className: 'dgs-btn ghost', onClick: () => { setDraft({ title: issue.title, body: issue.body }); setEditing(!editing) } }, t('edit')),
-          h('button', { className: 'dgs-btn danger', disabled: busy,
-            onClick: async () => {
-              setBusy(true)
-              await api('PATCH', `/repos/${repo.owner}/${repo.name}/issues/${idx}`, { state: issue.state === 'open' ? 'closed' : 'open' })
-              setBusy(false); reload()
-            } }, issue.state === 'open' ? t('close') : t('reopen'))),
-        msg ? h('div', { className: 'dgs-err' }, msg) : null,
+      const main = h('div', null,
         editing ? h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
           h('input', { className: 'dgs-input', value: draft.title, onChange: (e) => setDraft({ ...draft, title: e.target.value }) }),
           h('textarea', { className: 'dgs-input', style: { marginTop: 8 }, value: draft.body, onChange: (e) => setDraft({ ...draft, body: e.target.value }) }),
           h('div', { className: 'dgs-row', style: { marginTop: 8 } },
             h('button', { className: 'dgs-btn', disabled: busy || !draft.title.trim(), onClick: () => patch({ title: draft.title, body: draft.body }) }, t('save'))))
           : h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
-              issue.body ? h('div', { style: { whiteSpace: 'pre-wrap' } }, issue.body) : h('div', { className: 'dgs-sub' }, '—'),
+              issue.body ? h('div', { style: { whiteSpace: 'pre-wrap' } }, issue.body) : h('div', { className: 'dgs-sub' }, '暂无内容'),
               h('div', { className: 'dgs-row', style: { marginTop: 10, flexWrap: 'wrap' } },
                 (issue.labels || []).map((l) => h('span', { key: l.id, className: 'dgs-badge', style: { background: (l.color || '#70c24a') + '33' } }, l.name)),
                 issue.milestone ? h('span', { className: 'dgs-badge' }, '◆ ' + issue.milestone.title) : null,
                 issue.assignee ? h('span', { className: 'dgs-badge' }, '@' + issue.assignee) : null)),
-        h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
-          h('div', { className: 'dgs-sub', style: { marginBottom: 8 } }, '标签 · 里程碑 · 负责人'),
-          h('div', { className: 'dgs-row', style: { flexWrap: 'wrap' } },
-            allLabels.map((l) => h('label', { key: l.id, className: 'dgs-sub', style: { display: 'flex', gap: 4, alignItems: 'center', marginRight: 10 } },
-              h('input', { type: 'checkbox', checked: (issue.labels || []).some((x) => x.id === l.id),
-                onChange: (e) => {
-                  const cur = new Set((issue.labels || []).map((x) => x.id))
-                  if (e.target.checked) cur.add(l.id); else cur.delete(l.id)
-                  patch({ labels: [...cur] })
-                } }), l.name))),
-          h('div', { className: 'dgs-row', style: { marginTop: 8 } },
-            h('select', { className: 'dgs-input', style: { maxWidth: 180 }, value: issue.milestone ? issue.milestone.id : '',
-              onChange: (e) => patch({ milestone: Number(e.target.value) || 0 }) },
-              h('option', { value: '' }, '里程碑 —'),
-              allMs.map((m) => h('option', { key: m.id, value: m.id }, m.title + (m.closed ? ' ✓' : '')))),
-            h('select', { className: 'dgs-input', style: { maxWidth: 180 }, value: issue.assignee || '',
-              onChange: (e) => patch({ assignee: e.target.value }) },
-              h('option', { value: '' }, '负责人 —'),
-              collabs.map((u) => h('option', { key: u.name, value: u.name }, u.name))))),
         comments === null ? h('div', { className: 'dgs-empty' }, t('loading'))
           : comments.length === 0 ? h('div', { className: 'dgs-empty' }, t('noIssues'))
           : comments.map((c) =>
@@ -684,6 +694,50 @@ window.__ModuleLoader__.load({
                 await api('POST', `/repos/${repo.owner}/${repo.name}/issues/${idx}/comments`, { body: text })
                 setText(''); setBusy(false); reload()
               } }, t('comment')))))
+      const side = h('div', null,
+        h('div', { className: 'dgs-side-block' },
+          h('div', { className: 'dgs-side-title' }, '标签 ⚙'),
+          allLabels.length === 0 ? h('div', { className: 'dgs-sub' }, '未选择标签') : null,
+          allLabels.map((l) => h('label', { key: l.id, className: 'dgs-sub', style: { display: 'flex', gap: 6, alignItems: 'center', margin: '4px 0', cursor: 'pointer' } },
+            h('input', { type: 'checkbox', checked: (issue.labels || []).some((x) => x.id === l.id),
+              onChange: (e) => {
+                const cur = new Set((issue.labels || []).map((x) => x.id))
+                if (e.target.checked) cur.add(l.id); else cur.delete(l.id)
+                patch({ labels: [...cur] })
+              } }),
+            h('span', { className: 'dgs-badge', style: { background: (l.color || '#70c24a') + '33' } }, l.name)))),
+        h('div', { className: 'dgs-side-block' },
+          h('div', { className: 'dgs-side-title' }, '里程碑 ⚙'),
+          h('select', { className: 'dgs-input', style: { width: '100%' }, value: issue.milestone ? issue.milestone.id : '',
+            onChange: (e) => patch({ milestone: Number(e.target.value) || 0 }) },
+            h('option', { value: '' }, '未选择里程碑'),
+            allMs.map((m) => h('option', { key: m.id, value: m.id }, m.title + (m.closed ? ' ✓' : ''))))),
+        h('div', { className: 'dgs-side-block' },
+          h('div', { className: 'dgs-side-title' }, '指派成员 ⚙'),
+          h('select', { className: 'dgs-input', style: { width: '100%' }, value: issue.assignee || '',
+            onChange: (e) => patch({ assignee: e.target.value }) },
+            h('option', { value: '' }, '未指派成员'),
+            collabs.map((u) => h('option', { key: u.name, value: u.name }, u.name)))),
+        h('div', { className: 'dgs-side-block' },
+          h('div', { className: 'dgs-side-title' }, (issue.participants || 1) + ' 名参与者'),
+          h('div', { className: 'dgs-sub' }, issue.author || '')))
+      return h('div', null,
+        h('div', { className: 'dgs-row', style: { marginBottom: 10 } },
+          h('button', { className: 'dgs-btn ghost', onClick: onBack }, t('back')),
+          h('span', { style: { fontWeight: 600 } }, '#' + idx + ' ' + issue.title),
+          h('span', { className: 'dgs-badge' + (issue.state === 'open' ? ' ok' : ' closed') }, issue.state === 'open' ? t('openState') : t('closedState')),
+          h('span', { style: { flex: 1 } }),
+          h('button', { className: 'dgs-btn ghost', onClick: () => { setDraft({ title: issue.title, body: issue.body }); setEditing(!editing) } }, t('edit')),
+          h('button', { className: 'dgs-btn danger', disabled: busy,
+            onClick: async () => {
+              setBusy(true)
+              await api('PATCH', `/repos/${repo.owner}/${repo.name}/issues/${idx}`, { state: issue.state === 'open' ? 'closed' : 'open' })
+              setBusy(false); reload()
+            } }, issue.state === 'open' ? t('close') : t('reopen'))),
+        msg ? h('div', { className: 'dgs-err' }, msg) : null,
+        h('div', { className: 'dgs-issue-layout' },
+          h('div', { className: 'dgs-issue-main' }, main),
+          h('div', { className: 'dgs-issue-side' }, side)))
     }
 
     // ── 标签 ───────────────────────────────────────────────────────────────────
@@ -742,6 +796,9 @@ window.__ModuleLoader__.load({
           : list.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
           : list.map((l) => h('div', { key: l.id, className: 'dgs-issue' },
               h('span', { className: 'dgs-badge', style: { background: (l.color || '#70c24a') + '33', borderColor: l.color || '#70c24a' } }, l.name),
+              h('span', { style: { flex: 1 } }),
+              h('span', { className: 'dgs-sub' }, (l.openIssues || 0) + ' 个开启的工单'),
+              h('button', { className: 'dgs-btn ghost', onClick: () => { if (onFilterLabel) onFilterLabel(l.id) } }, '编辑'),
               h('button', { className: 'dgs-btn danger', onClick: async () => {
                 await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/labels/${l.id}`); reload()
               } }, t('delete')))))
@@ -850,8 +907,9 @@ window.__ModuleLoader__.load({
     // ── 仓库设置（基础信息 + 协作者） ──────────────────────────────────────────
 
     function RepoSettings({ repo, t }) {
+      const [sub, setSub] = useState('basic')
       const [info, setInfo] = useState(null)
-      const [form, setForm] = useState({ description: '', private: false })
+      const [form, setForm] = useState({ description: '', private: false, website: '' })
       const [collabs, setCollabs] = useState([])
       const [addName, setAddName] = useState('')
       const [hooks, setHooks] = useState(null)
@@ -862,78 +920,90 @@ window.__ModuleLoader__.load({
       const loadHooks = () => api('GET', `/dsh/repos/${repo.owner}/${repo.name}/hooks`).then((d) => setHooks(Array.isArray(d) ? d : []))
       useEffect(() => {
         api('GET', `/dsh/repos/${repo.owner}/${repo.name}`).then((d) => {
-          if (d && d.name) { setInfo(d); setForm({ description: d.description || '', private: !!d.private }) }
+          if (d && d.name) { setInfo(d); setForm({ description: d.description || '', private: !!d.private, website: d.website || '' }) }
           else setMsg((d && d.error) || t('loadFailed'))
         })
         loadCollabs()
         loadHooks()
       }, [repo.owner, repo.name])
+      if (info === null && !msg) return h('div', { className: 'dgs-empty' }, t('loading'))
+      const navItem = (k, label) => h('span', { key: k, className: 'item' + (sub === k ? ' active' : ''), onClick: () => setSub(k) }, label)
+      const basic = h('div', { className: 'dgs-card', style: { marginBottom: 12 } },
+        h('div', { style: { fontWeight: 700, marginBottom: 8 } }, '基本设置'),
+        h('div', { className: 'dgs-row' },
+          h('span', { className: 'dgs-sub', style: { minWidth: 70 } }, '仓库描述'),
+          h('input', { className: 'dgs-input', value: form.description, onChange: (e) => setForm({ ...form, description: e.target.value }) })),
+        h('div', { className: 'dgs-sub', style: { margin: '2px 0 0 78px', fontSize: 11 } }, '最多 512 个字符，剩余 ' + (512 - (form.description || '').length)),
+        h('div', { className: 'dgs-row' },
+          h('span', { className: 'dgs-sub', style: { minWidth: 70 } }, '官方网站'),
+          h('input', { className: 'dgs-input', placeholder: 'https://…', value: form.website, onChange: (e) => setForm({ ...form, website: e.target.value }) })),
+        h('div', { className: 'dgs-row' },
+          h('span', { className: 'dgs-sub', style: { minWidth: 70 } }, '可见性'),
+          h('label', { className: 'dgs-sub', style: { display: 'flex', gap: 4, alignItems: 'center' } },
+            h('input', { type: 'checkbox', checked: form.private, onChange: (e) => setForm({ ...form, private: e.target.checked }) }), '该仓库为私有的')),
+        h('div', { className: 'dgs-row', style: { marginTop: 8 } },
+          h('button', { className: 'dgs-btn', disabled: busy,
+            onClick: async () => {
+              setBusy(true); setMsg('')
+              const d = await api('PATCH', `/dsh/repos/${repo.owner}/${repo.name}`, form)
+              setBusy(false)
+              d && d.ok ? setMsg('✓ 已保存') : setMsg((d && d.error) || 'failed')
+            } }, '更新设置')))
+      const collab = h('div', { className: 'dgs-card' },
+        h('div', { style: { fontWeight: 700, marginBottom: 8 } }, '协作者'),
+        h('div', { className: 'dgs-row' },
+          h('input', { className: 'dgs-input', style: { maxWidth: 200 }, placeholder: '用户名', value: addName, onChange: (e) => setAddName(e.target.value) }),
+          h('button', { className: 'dgs-btn', disabled: !addName.trim(),
+            onClick: async () => {
+              const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/collaborators/${encodeURIComponent(addName.trim())}`)
+              if (d && d.ok !== false && !d.error) { setAddName(''); setMsg(''); loadCollabs() } else setMsg((d && d.error) || 'failed')
+            } }, '+ 添加')),
+        collabs.length === 0 ? h('div', { className: 'dgs-sub', style: { marginTop: 8 } }, '—') : null,
+        collabs.map((u) => h('div', { key: u.name, className: 'dgs-row', style: { marginTop: 6 } },
+          h('a', { className: 'dgs-name', href: '#/u/' + u.name }, u.name),
+          h('span', { style: { flex: 1 } }),
+          h('button', { className: 'dgs-btn danger', onClick: async () => {
+            await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/collaborators/${encodeURIComponent(u.name)}`)
+            loadCollabs()
+          } }, t('delete')))))
+      const hooksCard = h('div', { className: 'dgs-card' },
+        h('div', { style: { fontWeight: 700, marginBottom: 8 } }, 'Webhook'),
+        h('div', { className: 'dgs-row' },
+          h('input', { className: 'dgs-input', placeholder: 'https://…', value: hookUrl, onChange: (e) => setHookUrl(e.target.value) }),
+          h('button', { className: 'dgs-btn', disabled: !hookUrl.trim(), onClick: async () => {
+            const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/hooks`, { url: hookUrl.trim() })
+            if (d && !d.error) { setHookUrl(''); loadHooks() } else setMsg((d && d.error) || 'failed')
+          } }, '+ 添加')),
+        (hooks || []).map((hk) => h('div', { key: hk.id, className: 'dgs-row', style: { marginTop: 6 } },
+          h('span', { className: 'dgs-badge' + (hk.is_active ? ' ok' : ' closed') }, hk.is_active ? '启用' : '停用'),
+          h('span', { className: 'dgs-sub', style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' } }, hk.url),
+          h('button', { className: 'dgs-btn ghost', onClick: async () => {
+            await api('PATCH', `/dsh/repos/${repo.owner}/${repo.name}/hooks/${hk.id}`, { active: !hk.is_active }); loadHooks()
+          } }, hk.is_active ? '停用' : '启用'),
+          h('button', { className: 'dgs-btn danger', onClick: async () => {
+            await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/hooks/${hk.id}`); loadHooks()
+          } }, t('delete')))),
+        hooks !== null && hooks.length === 0 ? h('div', { className: 'dgs-sub', style: { marginTop: 6 } }, '—') : null)
+      const danger = h('div', { className: 'dgs-card', style: { marginTop: 12, borderColor: 'var(--dsw-alias-state-error-primary)55' } },
+        h('div', { style: { fontWeight: 700, marginBottom: 8, color: 'var(--dsw-alias-state-error-primary)' } }, '危险区域'),
+        h('div', { className: 'dgs-row' },
+          h('span', { className: 'dgs-sub', style: { flex: 1 } }, '删除此仓库（含所有工单/PR/Wiki）'),
+          h('button', { className: 'dgs-btn danger', onClick: async () => {
+            if (!confirm('确定删除仓库 ' + repo.name + ' ？此操作不可恢复')) return
+            const d = await api('DELETE', '/repos/' + repo.owner + '/' + repo.name)
+            if (d && d.ok) nav('/repos')
+            else setMsg((d && d.error) || '删除失败')
+          } }, t('delete') + ' ' + repo.name)))
       return h('div', null,
         msg ? h('div', { className: 'dgs-err' }, msg) : null,
-        info === null ? h('div', { className: 'dgs-empty' }, t('loading'))
-          : h('div', null,
-              h('div', { className: 'dgs-card', style: { marginBottom: 12 } },
-                h('div', { style: { fontWeight: 700, marginBottom: 8 } }, '基础信息'),
-                h('div', { className: 'dgs-row' },
-                  h('span', { className: 'dgs-sub', style: { minWidth: 50 } }, '描述'),
-                  h('input', { className: 'dgs-input', value: form.description, onChange: (e) => setForm({ ...form, description: e.target.value }) })),
-                h('div', { className: 'dgs-row' },
-                  h('span', { className: 'dgs-sub', style: { minWidth: 50 } }, '可见性'),
-                  h('label', { className: 'dgs-sub', style: { display: 'flex', gap: 4, alignItems: 'center' } },
-                    h('input', { type: 'checkbox', checked: form.private, onChange: (e) => setForm({ ...form, private: e.target.checked }) }), t('private'))),
-                h('div', { className: 'dgs-row', style: { marginTop: 8 } },
-                  h('button', { className: 'dgs-btn', disabled: busy,
-                    onClick: async () => {
-                      setBusy(true); setMsg('')
-                      const d = await api('PATCH', `/dsh/repos/${repo.owner}/${repo.name}`, form)
-                      setBusy(false)
-                      d && d.ok ? setMsg('✓ 已保存') : setMsg((d && d.error) || 'failed')
-                    } }, t('save')))),
-              h('div', { className: 'dgs-card' },
-                h('div', { style: { fontWeight: 700, marginBottom: 8 } }, '协作者'),
-                h('div', { className: 'dgs-row' },
-                  h('input', { className: 'dgs-input', style: { maxWidth: 200 }, placeholder: '用户名', value: addName, onChange: (e) => setAddName(e.target.value) }),
-                  h('button', { className: 'dgs-btn', disabled: !addName.trim(),
-                    onClick: async () => {
-                      const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/collaborators/${encodeURIComponent(addName.trim())}`)
-                      if (d && d.ok !== false && !d.error) { setAddName(''); setMsg(''); loadCollabs() } else setMsg((d && d.error) || 'failed')
-                    } }, '+ 添加')),
-                collabs.length === 0 ? h('div', { className: 'dgs-sub', style: { marginTop: 8 } }, '—') : null,
-                collabs.map((u) => h('div', { key: u.name, className: 'dgs-row', style: { marginTop: 6 } },
-                  h('a', { className: 'dgs-name', href: '#/u/' + u.name }, u.name),
-                  h('span', { style: { flex: 1 } }),
-                  h('button', { className: 'dgs-btn danger', onClick: async () => {
-                    await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/collaborators/${encodeURIComponent(u.name)}`)
-                    loadCollabs()
-                  } }, t('delete'))))),
-              h('div', { className: 'dgs-card', style: { marginTop: 12 } },
-                h('div', { style: { fontWeight: 700, marginBottom: 8 } }, 'Webhook'),
-                h('div', { className: 'dgs-row' },
-                  h('input', { className: 'dgs-input', placeholder: 'https://…', value: hookUrl, onChange: (e) => setHookUrl(e.target.value) }),
-                  h('button', { className: 'dgs-btn', disabled: !hookUrl.trim(), onClick: async () => {
-                    const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/hooks`, { url: hookUrl.trim() })
-                    if (d && !d.error) { setHookUrl(''); loadHooks() } else setMsg((d && d.error) || 'failed')
-                  } }, '+ 添加')),
-                (hooks || []).map((hk) => h('div', { key: hk.id, className: 'dgs-row', style: { marginTop: 6 } },
-                  h('span', { className: 'dgs-badge' + (hk.is_active ? ' ok' : ' closed') }, hk.is_active ? '启用' : '停用'),
-                  h('span', { className: 'dgs-sub', style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' } }, hk.url),
-                  h('button', { className: 'dgs-btn ghost', onClick: async () => {
-                    await api('PATCH', `/dsh/repos/${repo.owner}/${repo.name}/hooks/${hk.id}`, { active: !hk.is_active }); loadHooks()
-                  } }, hk.is_active ? '停用' : '启用'),
-                  h('button', { className: 'dgs-btn danger', onClick: async () => {
-                    await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/hooks/${hk.id}`); loadHooks()
-                  } }, t('delete')))),
-                hooks !== null && hooks.length === 0 ? h('div', { className: 'dgs-sub', style: { marginTop: 6 } }, '—') : null),
-              h('div', { className: 'dgs-card', style: { marginTop: 12, borderColor: 'var(--dsw-alias-state-error-primary)55' } },
-                h('div', { style: { fontWeight: 700, marginBottom: 8, color: 'var(--dsw-alias-state-error-primary)' } }, '危险区域'),
-                h('div', { className: 'dgs-row' },
-                  h('span', { className: 'dgs-sub', style: { flex: 1 } }, '删除此仓库（含所有工单/PR/Wiki）'),
-                  h('button', { className: 'dgs-btn danger', onClick: async () => {
-                    if (!confirm('确定删除仓库 ' + repo.name + ' ？此操作不可恢复')) return
-                    const d = await api('DELETE', '/repos/' + repo.owner + '/' + repo.name)
-                    if (d && d.ok) nav('/repos')
-                    else setMsg((d && d.error) || '删除失败')
-                  } }, t('delete') + ' ' + repo.name)))))
+        h('div', { className: 'dgs-settings-layout' },
+          h('div', { className: 'dgs-settings-nav' },
+            navItem('basic', '基本设置'),
+            navItem('collab', '管理协作者'),
+            navItem('hooks', '管理 Web 钩子'),
+            navItem('danger', '危险区域')),
+          h('div', { style: { flex: 1, minWidth: 0 } },
+            sub === 'basic' ? basic : sub === 'collab' ? collab : sub === 'hooks' ? hooksCard : danger)))
     }
 
     // ── PR（列表 + 详情 + 合并 + 评论复用 issue 通道） ────────────────────────
@@ -1071,6 +1141,7 @@ window.__ModuleLoader__.load({
       const [pages, setPages] = useState(null)
       const [page, setPage] = useState(null) // {name, html, content}
       const [hist, setHist] = useState(null)
+      const [histMeta, setHistMeta] = useState(null)
       const [editing, setEditing] = useState(false)
       const [draft, setDraft] = useState('')
       const [creating, setCreating] = useState(false)
@@ -1083,9 +1154,11 @@ window.__ModuleLoader__.load({
       }, [repo.owner, repo.name])
       useEffect(reload, [reload])
       const openPage = (name) => {
-        setEditing(false); setCreating(false); setMsg(''); setHist(null)
+        setEditing(false); setCreating(false); setMsg(''); setHist(null); setHistMeta(null)
         api('GET', `/dsh/repos/${repo.owner}/${repo.name}/wiki/${encodeURIComponent(name)}`)
           .then((d) => d.html !== undefined ? setPage(d) : setPage({ name, missing: true, content: '', html: '' }))
+        api('GET', `/dsh/repos/${repo.owner}/${repo.name}/wiki/${encodeURIComponent(name)}/commits`)
+          .then((d) => { if (Array.isArray(d) && d.length) setHistMeta({ author: d[0].author, date: d[0].date }) })
       }
       return h('div', null,
         h('div', { className: 'dgs-row', style: { margin: '8px 0 12px' } },
@@ -1133,7 +1206,9 @@ window.__ModuleLoader__.load({
               : page.missing ? h('div', { className: 'dgs-empty' }, '404')
               : h('div', null,
                   h('div', { className: 'dgs-row', style: { margin: '4px 0 8px' } },
-                    h('span', { style: { fontWeight: 600 } }, page.name),
+                    h('div', null,
+                      h('span', { style: { fontWeight: 600 } }, page.name),
+                      histMeta ? h('div', { className: 'dgs-sub', style: { marginTop: 2 } }, (histMeta.author || '') + ' 于 ' + timeAgo(histMeta.date) + ' 修改了此页面') : null),
                     h('span', { style: { flex: 1 } }),
                     h('button', { className: 'dgs-btn ghost', onClick: () => { setDraft(page.content || ''); setEditing(true) } }, t('edit')),
                     h('button', { className: 'dgs-btn ghost', onClick: () => {
@@ -1243,7 +1318,14 @@ window.__ModuleLoader__.load({
                     await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/releases/${r.id}`)
                     reload()
                   } }, t('delete'))),
-                r.noteHtml ? h('div', { className: 'dgs-md', style: { marginTop: 8 }, dangerouslySetInnerHTML: { __html: r.noteHtml } }) : null)),
+                h('div', { className: 'dgs-sub', style: { marginTop: 4 } },
+                  (r.author || '') + ' · ' + timeAgo((r.createdAt || 0) * 1000) + ' 发布 · ' +
+                  (r.behind ? '在该版本发布之后已有 ' + r.behind + ' 次代码提交到 ' + (r.target || '默认') + ' 分支' : '暂无后续提交')),
+                r.noteHtml ? h('div', { className: 'dgs-md', style: { marginTop: 8 }, dangerouslySetInnerHTML: { __html: r.noteHtml } }) : null,
+                h('div', { className: 'dgs-row', style: { marginTop: 10, gap: 8 } },
+                  h('span', { className: 'dgs-sub' }, '下载附件：'),
+                  h('a', { className: 'dgs-sub', href: `/dsh-git-server/api/dsh/repos/${repo.owner}/${repo.name}/archive/${encodeURIComponent(r.tag)}.zip`, download: `${repo.name}-${r.tag}.zip` }, '源代码 (ZIP)'),
+                  h('a', { className: 'dgs-sub', href: `/dsh-git-server/api/dsh/repos/${repo.owner}/${repo.name}/archive/${encodeURIComponent(r.tag)}.tar.gz`, download: `${repo.name}-${r.tag}.tar.gz` }, '源代码 (TAR.GZ)')))),
         (plainTags && plainTags.length > 0) ? h('div', { style: { marginTop: 16 } },
           h('div', { style: { fontWeight: 700, margin: '4px 0 8px' } }, '未发版的标签'),
           plainTags.map((tg) => h('div', { key: tg, className: 'dgs-issue' },
@@ -1262,30 +1344,40 @@ window.__ModuleLoader__.load({
       const [repos, setRepos] = useState(null)
       const [users, setUsers] = useState(null)
       const load = useCallback(() => {
-        api('GET', '/dsh/explore/repos?q=' + encodeURIComponent(q)).then((d) => setRepos(d.data || d || []))
-        api('GET', '/dsh/explore/users?q=' + encodeURIComponent(q)).then((d) => setUsers(d.data || d || []))
+        api('GET', '/dsh/explore/repos?q=' + encodeURIComponent(q)).then((d) => setRepos(Array.isArray(d) ? d : (d.data || [])))
+        api('GET', '/dsh/explore/users?q=' + encodeURIComponent(q)).then((d) => setUsers(Array.isArray(d) ? d : (d.data || [])))
       }, [q])
       useEffect(() => { const tm = setTimeout(load, 300); return () => clearTimeout(tm) }, [q])
-      return h('div', null,
-        h('input', { className: 'dgs-input', style: { width: '100%', marginBottom: 12 }, placeholder: '搜索仓库 / 用户', value: q, onChange: (e) => setQ(e.target.value) }),
-        h('div', { className: 'dgs-tabs' },
-          ['repos', 'users'].map((k) =>
-            h('button', { key: k, className: 'dgs-tab' + (tab === k ? ' active' : ''), onClick: () => setTab(k) }, k === 'repos' ? '仓库' : '用户'))),
-        tab === 'repos' && (repos === null ? h('div', { className: 'dgs-empty' }, t('loading'))
-          : repos.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
-          : repos.map((r) =>
-              h('div', { key: r.owner + '/' + r.name, className: 'dgs-card' },
-                h('div', { className: 'dgs-row' },
-                  h('a', { className: 'dgs-name', href: '#/r/' + r.owner + '/' + r.name }, r.owner + '/' + r.name),
-                  h('span', { style: { flex: 1 } }),
-                  h('span', { className: 'dgs-sub' }, '★ ' + r.stars)),
-                r.description ? h('div', { className: 'dgs-sub' }, r.description) : null))),
-        tab === 'users' && (users === null ? h('div', { className: 'dgs-empty' }, t('loading'))
-          : users.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
-          : users.map((u) =>
-              h('div', { key: u.name, className: 'dgs-card' },
-                h('a', { className: 'dgs-name', href: '#/u/' + u.name }, u.name),
-                u.full_name ? h('span', { className: 'dgs-sub', style: { marginLeft: 8 } }, u.full_name) : null))))
+      const sideItem = (k, label) => h('span', {
+        key: k, className: 'item' + (tab === k ? ' active' : ''), onClick: () => setTab(k),
+        style: { display: 'block', padding: '7px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13,
+          color: tab === k ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
+          fontWeight: tab === k ? 600 : 400, background: tab === k ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent' },
+      }, label)
+      return h('div', { className: 'dgs-settings-layout' },
+        h('div', { className: 'dgs-settings-nav' }, sideItem('repos', '仓库'), sideItem('users', '用户')),
+        h('div', { style: { flex: 1, minWidth: 0 } },
+          h('div', { className: 'dgs-row', style: { marginBottom: 12 } },
+            h('input', { className: 'dgs-input', placeholder: '搜索仓库 / 用户', value: q, onChange: (e) => setQ(e.target.value) }),
+            h('button', { className: 'dgs-btn', onClick: load }, '搜索')),
+          tab === 'repos' && (repos === null ? h('div', { className: 'dgs-empty' }, t('loading'))
+            : repos.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
+            : repos.map((r) =>
+                h('div', { key: r.owner + '/' + r.name, className: 'dgs-card dgs-repo', onClick: () => nav('/r/' + r.owner + '/' + r.name), style: { cursor: 'pointer' } },
+                  h('div', { className: 'dgs-row' },
+                    h('span', { className: 'dgs-name' }, r.owner + '/' + r.name),
+                    h('span', { style: { flex: 1 } }),
+                    h('span', { className: 'dgs-sub' }, '★ ' + (r.stars || 0) + ' ⑂ ' + (r.forks || 0))),
+                  r.description ? h('div', { className: 'dgs-sub' }, r.description) : null,
+                  h('div', { className: 'dgs-sub' }, r.updated ? '最后更新于 ' + timeAgo(r.updated * 1000) : '')))),
+          tab === 'users' && (users === null ? h('div', { className: 'dgs-empty' }, t('loading'))
+            : users.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
+            : users.map((u) =>
+                h('div', { key: u.name, className: 'dgs-card dgs-repo', onClick: () => nav('/u/' + u.name), style: { cursor: 'pointer' } },
+                  h('div', { className: 'dgs-row' },
+                    h('span', { className: 'dgs-name' }, u.name),
+                    u.full_name ? h('span', { className: 'dgs-sub', style: { marginLeft: 8 } }, u.full_name) : null),
+                  h('div', { className: 'dgs-sub' }, '关注者 - 关注中'))))))
     }
 
     // ── 组织 ───────────────────────────────────────────────────────────────────
@@ -1369,26 +1461,32 @@ window.__ModuleLoader__.load({
         api('GET', '/dsh/users/' + encodeURIComponent(name)).then((d) => setProfile(d.data || d))
       }, [name])
       if (profile === null) return h('div', { className: 'dgs-empty' }, t('loading'))
-      return h('div', null,
-        h('div', { className: 'dgs-row', style: { marginBottom: 12 } },
-          h('span', { className: 'dgs-h1' }, name),
-          profile.isAdmin ? h('span', { className: 'dgs-badge ok' }, 'admin') : null,
-          h('span', { style: { flex: 1 } }),
-          h('span', { className: 'dgs-sub' }, `${profile.followers.length} 粉丝 · ${profile.following.length} 关注`)),
-        h('div', { style: { fontWeight: 700, margin: '4px 0 10px' } }, '仓库'),
-        profile.repos.length === 0 ? h('div', { className: 'dgs-empty' }, '—') : null,
-        profile.repos.map((r) =>
-          h('div', { key: r.name, className: 'dgs-card dgs-repo', onClick: () => nav('/r/' + r.owner + '/' + r.name), style: { cursor: 'pointer' } },
-            h('div', { className: 'dgs-row' },
-              h('span', { className: 'dgs-name' }, r.owner + '/' + r.name),
-              h('span', { style: { flex: 1 } }),
-              h('span', { className: 'dgs-sub' }, '★ ' + r.stars)),
-            r.description ? h('div', { className: 'dgs-sub' }, r.description) : null)),
-        h('div', { style: { fontWeight: 700, margin: '12px 0 10px' } }, '动态'),
-        profile.activity.length === 0 ? h('div', { className: 'dgs-empty' }, '—') : null,
-        profile.activity.map((a, i) =>
-          h('div', { key: i, className: 'dgs-card', style: { padding: '8px 14px' } },
-            h('span', { className: 'dgs-sub' }, `${a.repo} · ${fmtDate(a.date * 1000)}`))))
+      return h('div', { className: 'dgs-settings-layout' },
+        h('div', { className: 'dgs-settings-nav', style: { width: 230 } },
+          h('div', { style: { width: 64, height: 64, borderRadius: 10, background: 'var(--dsw-alias-bg-layer-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 700, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10 } },
+            (name || '?').slice(0, 1).toUpperCase()),
+          h('div', { className: 'dgs-h1', style: { fontSize: 17 } }, name),
+          profile.isAdmin ? h('span', { className: 'dgs-badge ok', style: { marginTop: 4 } }, 'admin') : null,
+          h('div', { className: 'dgs-sub', style: { marginTop: 10 } }, profile.email ? '✉ ' + profile.email : ''),
+          h('div', { className: 'dgs-sub', style: { marginTop: 4 } }, '🕐 加入于 ' + (profile.created ? new Date(profile.created * 1000).toLocaleDateString() : '')),
+          h('div', { className: 'dgs-sub', style: { marginTop: 10 } },
+            `${profile.followers.length} 关注者 - ${profile.following.length} 关注中`)),
+        h('div', { style: { flex: 1, minWidth: 0 } },
+          h('div', { style: { fontWeight: 700, margin: '4px 0 10px' } }, '仓库'),
+          profile.repos.length === 0 ? h('div', { className: 'dgs-empty' }, '—') : null,
+          profile.repos.map((r) =>
+            h('div', { key: r.name, className: 'dgs-card dgs-repo', onClick: () => nav('/r/' + r.owner + '/' + r.name), style: { cursor: 'pointer' } },
+              h('div', { className: 'dgs-row' },
+                h('span', { className: 'dgs-name' }, r.owner + '/' + r.name),
+                h('span', { style: { flex: 1 } }),
+                h('span', { className: 'dgs-sub' }, '★ ' + (r.stars || 0) + ' ⑂ ' + (r.forks || 0))),
+              r.description ? h('div', { className: 'dgs-sub' }, r.description) : null,
+              h('div', { className: 'dgs-sub' }, r.updated ? '最后更新于 ' + timeAgo(r.updated * 1000) : ''))),
+          h('div', { style: { fontWeight: 700, margin: '14px 0 10px' } }, '动态'),
+          profile.activity.length === 0 ? h('div', { className: 'dgs-empty' }, '—') : null,
+          profile.activity.map((a, i) =>
+            h('div', { key: i, className: 'dgs-card', style: { padding: '8px 14px' } },
+              h('span', { className: 'dgs-sub' }, `${a.repo} · ${timeAgo(a.date * 1000)}`)))))
     }
 
     // ── 管理面板 ───────────────────────────────────────────────────────────────
@@ -1672,6 +1770,15 @@ window.__ModuleLoader__.load({
     function fmtDate(s) {
       if (!s) return ''
       try { return new Date(s).toLocaleString() } catch { return s }
+    }
+    function timeAgo(ms) {
+      const sec = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+      if (sec < 60) return '刚刚'
+      if (sec < 3600) return Math.floor(sec / 60) + ' 分钟之前'
+      if (sec < 86400) return Math.floor(sec / 3600) + ' 小时之前'
+      if (sec < 86400 * 30) return Math.floor(sec / 86400) + ' 天之前'
+      if (sec < 86400 * 365) return Math.floor(sec / 86400 / 30) + ' 个月之前'
+      return Math.floor(sec / 86400 / 365) + ' 年之前'
     }
 
     // ── plugin plane ──────────────────────────────────────────────────────────

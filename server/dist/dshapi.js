@@ -6,6 +6,7 @@
 // 这是私有内核的内部接口——不再背负上游 gogs API 的兼容义务。
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as db from './db/db.js';
 import * as git from './gitx/git.js';
 import { conf } from './conf.js';
@@ -114,7 +115,7 @@ export function registerDshRoutes(m) {
             let size = 0;
             if (e.type === 'blob')
                 size = Number((await git.git(dir, 'cat-file', '-s', e.sha))?.toString('utf8').trim() || 0);
-            const out = (await git.git(dir, 'log', '-1', '--pretty=format:%h%x1f%s%x1f%cs', '--end-of-options', ref, '--', epath))?.toString('utf8') ?? '';
+            const out = (await git.git(dir, 'log', '-1', '--pretty=format:%h%x1f%s%x1f%ct', '--end-of-options', ref, '--', epath))?.toString('utf8') ?? '';
             const [lsha, lmsg, ldate] = out.split('\x1f');
             entries.push({
                 name: e.name, type: e.type, path: epath, size,
@@ -206,11 +207,13 @@ export function registerDshRoutes(m) {
         const ms = issue.milestone_id ? db.db().prepare('SELECT id, name FROM milestone WHERE id = ?').get(issue.milestone_id) : null;
         const as = issue.assignee_id ? db.db().prepare('SELECT name FROM user WHERE id = ?').get(issue.assignee_id) : null;
         const poster = issue.poster_id ? db.db().prepare('SELECT name FROM user WHERE id = ?').get(issue.poster_id) : null;
+        const participants = db.db().prepare('SELECT COUNT(DISTINCT poster_id) AS c FROM comment WHERE issue_id = ? UNION ALL SELECT poster_id AS c FROM issue WHERE id = ?').all(issue.id, issue.id).length;
         c.JSONSuccess({
             number: Number(issue.index), title: issue.name, body: issue.content || '',
             state: issue.is_closed ? 'closed' : 'open',
             labels, milestone: ms ? { id: ms.id, title: ms.name } : null,
             assignee: as ? as.name : '', author: poster ? poster.name : '',
+            createdAt: Number(issue.created_unix) * 1000 || 0, participants,
         });
     });
     // ── issue 列表（富字段 + 标签/里程碑/负责人过滤） ─────────────
@@ -341,12 +344,53 @@ export function registerDshRoutes(m) {
         const diff = (await git.git(dir, 'diff', '--stat', '--end-of-options', `${base}...${head}`))?.toString('utf8') ?? '';
         c.JSONSuccess({ base, head, commits, diffStat: diff });
     });
+    // ── 源码下载（archive zip/tar.gz，二进制流） ──────────────────
+    m.get('/api/dsh/repos/:o/:r/archive/*', async (c) => {
+        const ar = authRepo(c);
+        if (!ar)
+            return;
+        const wild = c.Params(':*');
+        const ext = wild.endsWith('.zip') ? 'zip' : wild.endsWith('.tar.gz') ? 'tar.gz' : null;
+        if (!ext) {
+            c.JSON(404, { error: 'bad format' });
+            return;
+        }
+        const ref = wild.slice(0, wild.length - (ext === 'zip' ? 4 : 7));
+        const dir = ar.repo.RepoPath();
+        const sha = (await git.gitOK(dir, 'rev-parse', '--verify', '--end-of-options', ref))?.toString().trim();
+        if (!sha) {
+            c.JSON(404, { error: 'ref not found' });
+            return;
+        }
+        const dst = path.join(os.tmpdir(), `dgs-archive-${Date.now()}.${ext}`);
+        try {
+            await git.archive(dir, sha, ext, dst, ar.repo.name + '/');
+            const buf = fs.readFileSync(dst);
+            c.res.setHeader('Content-Type', ext === 'zip' ? 'application/zip' : 'application/gzip');
+            c.res.setHeader('Content-Disposition', `attachment; filename=${ar.repo.name}-${ref.replace(/\//g, '-')}.${ext}`);
+            c.res.setHeader('Content-Length', String(buf.length));
+            c.res.statusCode = 200;
+            c.res.end(buf);
+            c.rendered = true;
+        }
+        catch (e) {
+            c.JSON(500, { error: String(e?.message ?? e).slice(0, 160) });
+        }
+        finally {
+            fs.rmSync(dst, { force: true });
+        }
+    });
     // ── 标签管理 CRUD ─────────────────────────────────────────────
     m.get('/api/dsh/repos/:o/:r/labels', async (c) => {
         const ar = authRepo(c);
         if (!ar)
             return;
-        c.JSONSuccess(db.listLabels(ar.repo.id).map((l) => ({ id: l.id, name: l.name, color: l.color })));
+        const rows = db.listLabels(ar.repo.id);
+        const counts = db.db().prepare('SELECT il.label_id, COUNT(*) AS c FROM issue_label il JOIN issue i ON i.id = il.issue_id WHERE i.repo_id = ? AND i.is_closed = 0 AND i.is_pull = 0 GROUP BY il.label_id').all(ar.repo.id);
+        const cmap = {};
+        for (const x of counts)
+            cmap[x.label_id] = x.c;
+        c.JSONSuccess(rows.map((l) => ({ id: l.id, name: l.name, color: l.color, openIssues: cmap[l.id] || 0 })));
     });
     m.post('/api/dsh/repos/:o/:r/labels', async (c) => {
         const ar = authRepo(c, true);
@@ -629,6 +673,49 @@ export function registerDshRoutes(m) {
         if (!ar)
             return;
         db.db().prepare('DELETE FROM webhook WHERE id = ? AND repo_id = ?').run(c.ParamsInt64(':id'), ar.repo.id);
+        c.JSONSuccess({ ok: true });
+    });
+    // ── 部署密钥（settings/keys） ─────────────────────────────────
+    m.get('/api/dsh/repos/:o/:r/keys', async (c) => {
+        const ar = authRepo(c);
+        if (!ar)
+            return;
+        const rows = db.db().prepare('SELECT k.id, k.name, k.fingerprint, k.created_unix FROM deploy_key dk JOIN public_key k ON k.id = dk.key_id WHERE dk.repo_id = ? ORDER BY k.id').all(ar.repo.id);
+        c.JSONSuccess(rows);
+    });
+    m.post('/api/dsh/repos/:o/:r/keys', async (c) => {
+        const ar = authRepo(c, true);
+        if (!ar)
+            return;
+        const body = await c.form();
+        const name = String(body.name ?? '').trim();
+        const content = String(body.content ?? '').trim();
+        if (!name || !content) {
+            c.JSON(422, { error: 'name and content required' });
+            return;
+        }
+        let fingerprint = '';
+        try {
+            const tmp = path.join(os.tmpdir(), 'dgs-key-' + Date.now());
+            fs.writeFileSync(tmp, content);
+            fingerprint = String((await git.git(os.tmpdir(), 'ssh-keygen', '-lf', tmp))?.toString('utf8') || '').trim();
+            fs.rmSync(tmp, { force: true });
+        }
+        catch {
+            fingerprint = 'ssh-key';
+        }
+        const now = Math.floor(Date.now() / 1000);
+        const info = db.db().prepare('INSERT INTO public_key (owner_id, name, fingerprint, content, created_unix, updated_unix) VALUES (?,?,?,?,?,?)')
+            .run(ar.user.id, name, fingerprint, content, now, now);
+        db.db().prepare('INSERT INTO deploy_key (key_id, repo_id, name, fingerprint, mode) VALUES (?,?,?,?,1)')
+            .run(Number(info.lastInsertRowid), ar.repo.id, name, fingerprint);
+        c.JSONSuccess({ id: Number(info.lastInsertRowid), name, fingerprint });
+    });
+    m.delete('/api/dsh/repos/:o/:r/keys/:id', async (c) => {
+        const ar = authRepo(c, true);
+        if (!ar)
+            return;
+        db.db().prepare('DELETE FROM deploy_key WHERE key_id = ? AND repo_id = ?').run(c.ParamsInt64(':id'), ar.repo.id);
         c.JSONSuccess({ ok: true });
     });
     // ── 协作者 ────────────────────────────────────────────────────
@@ -1018,12 +1105,24 @@ export function registerDshRoutes(m) {
         if (!ar)
             return;
         const rows = db.db().prepare('SELECT r.id, r.tag_name, r.title, r.note, r.is_draft, r.is_prerelease, r.created_unix, u.name AS author FROM `release` r LEFT JOIN user u ON u.id = r.publisher_id WHERE r.repo_id = ? ORDER BY r.created_unix DESC').all(ar.repo.id);
-        c.JSONSuccess(rows.map((r) => ({
-            id: r.id, tag: r.tag_name, title: r.title, draft: !!r.is_draft, prerelease: !!r.is_prerelease,
-            noteHtml: r.note ? sanitizeHTML(markdown(r.note, conf.subpath + '/', {})) : '',
-            noteRaw: r.note || '',
-            author: r.author, createdAt: r.created_unix,
-        })));
+        const dir = ar.repo.RepoPath();
+        const out = [];
+        for (const r of rows) {
+            let behind = 0;
+            try {
+                behind = Number((await git.git(dir, 'rev-list', '--count', '--end-of-options', `${r.tag_name}..${r.target || ar.repo.default_branch || conf.defaultBranch}`))?.toString('utf8').trim() || 0);
+            }
+            catch {
+                behind = 0;
+            }
+            out.push({
+                id: r.id, tag: r.tag_name, title: r.title, draft: !!r.is_draft, prerelease: !!r.is_prerelease,
+                noteHtml: r.note ? sanitizeHTML(markdown(r.note, conf.subpath + '/', {})) : '',
+                noteRaw: r.note || '',
+                author: r.author, createdAt: r.created_unix, target: r.target || '', behind,
+            });
+        }
+        c.JSONSuccess(out);
     });
     m.patch('/api/dsh/repos/:o/:r/releases/:id', async (c) => {
         const ar = authRepo(c, true);

@@ -216,6 +216,10 @@ window.__ModuleLoader__.load({
       let gone = false
 
       useEffect(() => {
+        const themeTimer = setInterval(syncThemeToFrame, 4000)
+        return () => clearInterval(themeTimer)
+      }, [])
+      useEffect(() => {
         let gone = false
         ;(async () => {
           try {
@@ -238,6 +242,30 @@ window.__ModuleLoader__.load({
         })()
         return () => { gone = true }
       }, [])
+
+      /** 把 dsh 当前主题（token 快照 + 暗色标志）写入 iframe 的 localStorage（同源）。
+       *  gogs 页面引导脚本读取后设置 CSS 变量与 data-ds-dark-theme。 */
+      async function syncThemeToFrame() {
+        try {
+          const frame = document.querySelector('iframe.dgs-iframe')
+          if (!frame || !frame.contentWindow) return
+          const doc = frame.contentDocument
+          if (!doc) return
+          const cs = getComputedStyle(document.body)
+          const tokens = {}
+          for (const t of ['--dsw-alias-brand-primary', '--dsw-alias-bg-base', '--dsw-alias-bg-layer-1', '--dsw-alias-label-primary', '--dsw-alias-label-secondary', '--dsw-alias-border-l2']) {
+            tokens[t] = cs.getPropertyValue(t).trim()
+          }
+          const dark = document.body.hasAttribute('data-ds-dark-theme')
+            || (document.documentElement.className || '').includes('dark')
+            || (getComputedStyle(document.documentElement).colorScheme || '') === 'dark'
+          const w = frame.contentWindow
+          try {
+            w.localStorage.setItem('dsh-theme-tokens', JSON.stringify(tokens))
+            w.localStorage.setItem('dsh-theme-dark', dark ? '1' : '0')
+          } catch {}
+        } catch (e) { /* 主题同步失败不影响功能 */ }
+      }
 
       async function doSave() {
         setBusy(true)
@@ -419,7 +447,10 @@ window.__ModuleLoader__.load({
             running ? h('a', { className: 'dgs-open', href: '/dsh-git-server/ui/', target: '_blank', rel: 'noreferrer' }, '↗ ' + t('uiOpenNew')) : null,
           ),
           running
-            ? h('iframe', { key: uiKey, className: 'dgs-iframe', src: '/dsh-git-server/ui/', title: t('uiTitle') })
+            ? h('iframe', {
+                key: uiKey, className: 'dgs-iframe', src: '/dsh-git-server/ui/', title: t('uiTitle'),
+                onLoad: () => { syncThemeToFrame() },
+              })
             : h('div', { className: 'dgs-hint' }, t('uiNotRunning')),
           running ? h('div', { className: 'dgs-hint' }, t('uiLoginHint')) : null,
           h('details', { className: 'dgs-config', open: !!detailsOpen,

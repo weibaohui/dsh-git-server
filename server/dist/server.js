@@ -108,6 +108,11 @@ function serveSPA(c, statusCode = 200) {
             .replaceAll('src="/src/', `src="${conf.subpath}/src/`)
             .replaceAll('href="/img/', `href="${conf.subpath}/img/`);
     }
+    // dsh 主题适配（SSR 页走 head.tmpl；SPA 壳在这里注入同一引导脚本）
+    if (String(c.req.headers['x-dsh-proxy'] ?? '') === '1') {
+        const boot = `<script>(function(){try{var raw=localStorage.getItem('dsh-theme-tokens');var dark=localStorage.getItem('dsh-theme-dark')==='1';if(raw){var t=JSON.parse(raw);for(var k in t)document.documentElement.style.setProperty(k,t[k]);}if(dark)document.documentElement.setAttribute('data-ds-dark-theme','');}catch(e){}})();</script><link rel="stylesheet" href="${conf.subpath}/css/dsh-theme.css">`;
+        html = html.replace('</head>', boot + '</head>');
+    }
     c.res.setHeader('Cache-Control', 'no-store');
     c.res.setHeader('Content-Type', 'text/html; charset=utf-8');
     c.res.statusCode = statusCode;

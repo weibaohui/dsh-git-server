@@ -442,6 +442,7 @@ module.exports = {
       const sess = await gogsSessionCookie(cfg, req.headers.cookie)
       const headers = { ...req.headers }
       headers.host = `127.0.0.1:${cfg.port}`
+      headers['x-dsh-proxy'] = '1'
       delete headers['content-length']
       delete headers.connection
       if (sess) headers.cookie = headers.cookie ? headers.cookie + '; ' + sess : sess

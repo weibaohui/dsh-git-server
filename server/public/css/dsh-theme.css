@@ -1,0 +1,151 @@
+/*
+ * dsh 主题适配层 —— 把 dsh 的 --dsw-alias-* token 映射到 gogs (semantic-ui) 的样式。
+ * 亮色：:root 基础；暗色：[data-ds-dark-theme] 覆盖。
+ * token 由 head.tmpl 的引导脚本从 localStorage 恢复（代理写入）。
+ */
+:root {
+  --gogs-bg: #ffffff;
+  --gogs-bg-alt: #f9fafb;
+  --gogs-bg-inset: #f1f3f5;
+  --gogs-text: #0f1115;
+  --gogs-text-secondary: #61666b;
+  --gogs-border: #e1e5ee;
+  --gogs-brand: #4176e6;
+  --gogs-brand-hover: #5686fe;
+  --gogs-header-bg: #ffffff;
+  --gogs-header-text: #0f1115;
+  --gogs-code-bg: #f5f6f7;
+}
+html[data-ds-dark-theme] {
+  --gogs-bg: #151517;
+  --gogs-bg-alt: #1b1b1c;
+  --gogs-bg-inset: #232324;
+  --gogs-text: #f9fafb;
+  --gogs-text-secondary: #979da6;
+  --gogs-border: #2c2c2e;
+  --gogs-brand: #5686fe;
+  --gogs-brand-hover: #679efe;
+  --gogs-header-bg: #151517;
+  --gogs-header-text: #f9fafb;
+  --gogs-code-bg: #1b1b1c;
+}
+
+/* ── 基础 ─────────────────────────────────────────────── */
+body {
+  background: var(--gogs-bg) !important;
+  color: var(--gogs-text) !important;
+}
+/* 顶栏 */
+.following.bar.light {
+  background: var(--gogs-header-bg) !important;
+  border-bottom: 1px solid var(--gogs-border) !important;
+}
+.following.bar .ui.menu .item, .following.bar a, .following.bar .brand {
+  color: var(--gogs-header-text) !important;
+}
+.following.bar .ui.menu .active.item, .following.bar .ui.dropdown .menu .item:hover {
+  background: var(--gogs-bg-inset) !important;
+}
+/* 链接 */
+a, .ui.breadcrumb a { color: var(--gogs-brand) !important; }
+a:hover { color: var(--gogs-brand-hover) !important; }
+/* 卡片/分段（仓库首页、issue 列表等） */
+.ui.segment, .ui.card, .ui.attached.segment, .ui.table.segment,
+.ui.tabs.container > .ui.tabular.menu .item.active {
+  background: var(--gogs-bg) !important;
+  color: var(--gogs-text) !important;
+  border-color: var(--gogs-border) !important;
+}
+.ui.divider { border-color: var(--gogs-border) !important; }
+/* 表格 */
+.ui.table {
+  background: var(--gogs-bg) !important;
+  color: var(--gogs-text) !important;
+  border-color: var(--gogs-border) !important;
+}
+.ui.table thead th { background: var(--gogs-bg-alt) !important; color: var(--gogs-text-secondary) !important; }
+.ui.table tr td { border-color: var(--gogs-border) !important; }
+.ui.table tr:hover td { background: var(--gogs-bg-alt) !important; }
+/* 输入框 */
+.ui.input input, input, textarea, select,
+.ui.form input, .ui.form textarea, .ui.selection.dropdown {
+  background: var(--gogs-bg) !important;
+  color: var(--gogs-text) !important;
+  border-color: var(--gogs-border) !important;
+}
+.ui.input input:focus, input:focus, textarea:focus {
+  border-color: var(--gogs-brand) !important;
+}
+::placeholder { color: var(--gogs-text-secondary) !important; opacity: 0.7 !important; }
+/* 按钮：主按钮用 dsh 品牌色 */
+.ui.primary.button, .ui.blue.button, .ui.green.button, .ui.positive.button {
+  background: var(--gogs-brand) !important;
+  color: #fff !important;
+  border: none !important;
+}
+.ui.primary.button:hover, .ui.blue.button:hover, .ui.green.button:hover, .ui.positive.button:hover {
+  background: var(--gogs-brand-hover) !important;
+}
+.ui.basic.button {
+  background: transparent !important;
+  color: var(--gogs-text) !important;
+  border: 1px solid var(--gogs-border) !important;
+}
+.ui.basic.button:hover { background: var(--gogs-bg-alt) !important; }
+.ui.basic.primary.button, .ui.basic.blue.button, .ui.basic.green.button {
+  color: var(--gogs-brand) !important;
+  border-color: var(--gogs-brand) !important;
+}
+/* 菜单/导航 */
+.ui.menu {
+  background: var(--gogs-bg) !important;
+  color: var(--gogs-text) !important;
+  border-color: var(--gogs-border) !important;
+}
+.ui.menu .item { color: var(--gogs-text-secondary) !important; }
+.ui.menu .active.item {
+  color: var(--gogs-brand) !important;
+  background: var(--gogs-bg-alt) !important;
+}
+.ui.tabular.menu .active.item {
+  border-color: var(--gogs-border) var(--gogs-border) var(--gogs-bg) !important;
+}
+.ui.dropdown .menu {
+  background: var(--gogs-bg) !important;
+  border-color: var(--gogs-border) !important;
+}
+.ui.dropdown .menu .item { color: var(--gogs-text) !important; }
+.ui.dropdown .menu .item:hover { background: var(--gogs-bg-alt) !important; }
+/* 标签（label 徽章） */
+.ui.label {
+  background: var(--gogs-bg-inset) !important;
+  color: var(--gogs-text) !important;
+  border: 1px solid var(--gogs-border) !important;
+}
+.ui.blue.label { background: var(--gogs-brand) !important; color: #fff !important; border: none !important; }
+.ui.green.label { background: #22c55e !important; color: #fff !important; border: none !important; }
+.ui.red.label { background: #ef4444 !important; color: #fff !important; border: none !important; }
+.ui.gray.label { background: var(--gogs-bg-inset) !important; }
+/* 代码视图 / markdown */
+.code-view, .markdown, pre, code, .file-content {
+  background: var(--gogs-bg) !important;
+  color: var(--gogs-text) !important;
+}
+.hljs { background: var(--gogs-bg-alt) !important; color: var(--gogs-text) !important; }
+.markdown code { background: var(--gogs-code-bg) !important; }
+.markdown pre { background: var(--gogs-code-bg) !important; }
+/* 弹窗 */
+.ui.modal {
+  background: var(--gogs-bg) !important;
+  color: var(--gogs-text) !important;
+  border: 1px solid var(--gogs-border) !important;
+}
+.ui.modal > .header { background: var(--gogs-bg-alt) !important; color: var(--gogs-text) !important; }
+/* 页脚 */
+footer { background: var(--gogs-bg-alt) !important; color: var(--gogs-text-secondary) !important; border-top: 1px solid var(--gogs-border) !important; }
+footer a { color: var(--gogs-text-secondary) !important; }
+/* 滚动条 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--gogs-border); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--gogs-text-secondary); }
+::-webkit-scrollbar-track { background: transparent; }

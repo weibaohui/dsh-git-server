@@ -292,6 +292,8 @@ export class Context {
         this.Data['RestLangs'] = allLangs.filter((l) => l.Lang !== this.lang);
         this.Data['i18n'] = this.locale;
         this.Data['Tr'] = (key, ...args) => this.locale.Tr(key, ...args);
+        // dsh 主题适配：由代理路径注入（head.tmpl 读取）
+        this.Data['DSHThemeAdapter'] = String(this.req.headers['x-dsh-proxy'] ?? '') === '1';
         this.Data['Flash'] = this.flash;
         this.Data['ShowFooterBranding'] = conf.showFooterBranding;
         if (process.env.TPL_DEBUG && tmpl.startsWith('repo/branches')) {

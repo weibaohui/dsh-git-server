@@ -77,6 +77,25 @@
 	<meta name="theme-color" content="{{ThemeColorMetaTag}}">
 
 	{{template "inject/head" .}}
+{{if .DSHThemeAdapter}}
+	<style id="dsh-theme-adapter">
+	/* dsh 主题适配层：由代理注入的 token 快照驱动（见 server/src/context.ts） */
+	</style>
+	<script>
+	(function () {
+		try {
+			var raw = localStorage.getItem('dsh-theme-tokens');
+			var dark = localStorage.getItem('dsh-theme-dark') === '1';
+			if (!raw) return;
+			var tokens = JSON.parse(raw);
+			var css = document.documentElement;
+			for (var k in tokens) css.style.setProperty(k, tokens[k]);
+			if (dark) css.setAttribute('data-ds-dark-theme', '');
+		} catch (e) {}
+	})();
+	</script>
+	<link rel="stylesheet" href="{{AppSubURL}}/css/dsh-theme.css">
+{{end}}
 </head>
 <body>
 	<div class="full height">

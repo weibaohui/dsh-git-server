@@ -591,7 +591,7 @@ module.exports = {
               }
               // /dsh/* 透传：内核 dsh API（overview/pulls/wiki/releases/markdown）
               if (parts && parts[0] === 'dsh') {
-                const kernelPath = '/api' + (rest.startsWith('/') ? rest : '/' + rest)
+                const kernelPath = '/api' + (rest.startsWith('/') ? rest : '/' + rest) + (url.search || '')
                 try {
                   const token = await kernelTokenFor(cfg, actor)
                   const headers = { Authorization: 'token ' + token }

@@ -421,6 +421,11 @@ export function registerDshRoutes(m) {
             sets.push('content = ?');
             args.push(String(body.description));
         }
+        if (body.due !== undefined) {
+            const t2 = Date.parse(String(body.due));
+            sets.push('deadline_unix = ?');
+            args.push(Number.isNaN(t2) ? 0 : Math.floor(t2 / 1000));
+        }
         if (body.closed !== undefined) {
             sets.push('is_closed = ?');
             args.push(body.closed ? 1 : 0);

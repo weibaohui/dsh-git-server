@@ -345,6 +345,7 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     const sets: string[] = []; const args: any[] = [];
     if (body.title !== undefined) { sets.push('name = ?'); args.push(String(body.title)); }
     if (body.description !== undefined) { sets.push('content = ?'); args.push(String(body.description)); }
+    if (body.due !== undefined) { const t2 = Date.parse(String(body.due)); sets.push('deadline_unix = ?'); args.push(Number.isNaN(t2) ? 0 : Math.floor(t2 / 1000)); }
     if (body.closed !== undefined) { sets.push('is_closed = ?'); args.push(body.closed ? 1 : 0); }
     if (sets.length) db.db().prepare(`UPDATE milestone SET ${sets.join(', ')} WHERE id = ? AND repo_id = ?`).run(...args, id, ar.repo.id);
     c.JSONSuccess({ ok: true });

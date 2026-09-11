@@ -646,7 +646,11 @@ function LabelsManage({ repo, t }) {
 
 function MilestonesManage({ repo, t }) {
   const [list, setList] = useState(null)
-  const [title, setTitle] = useState('')
+  const [showClosed, setShowClosed] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [editId, setEditId] = useState(null)
+  const [form, setForm] = useState({ title: '', due: '', description: '' })
+  const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [openMs, setOpenMs] = useState(null)
   const [msIssues, setMsIssues] = useState(null)
@@ -657,45 +661,85 @@ function MilestonesManage({ repo, t }) {
     setOpenMs(m.id); setMsIssues(null)
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/issues?milestone=${m.id}&state=all`).then((d) => setMsIssues(Array.isArray(d) ? d : []))
   }
-  const bar = (m) => {
-    const total = (m.open || 0) + (m.closedIssues || 0)
-    const pct = total ? Math.round((m.closedIssues || 0) * 100 / total) : 0
-    return h('div', { style: { flex: 1, maxWidth: 260, display: 'flex', alignItems: 'center', gap: 8 } },
-      h('div', { style: { flex: 1, height: 6, background: 'var(--dsw-alias-bg-layer-2)', borderRadius: 6, overflow: 'hidden' } },
-        h('div', { style: { width: pct + '%', height: '100%', background: 'var(--dsw-alias-state-business-primary)' } })),
-      h('span', { className: 'dgs-sub' }, pct + '%'))
+  const startCreate = () => {
+    setCreating(!creating); setEditId(null)
+    setForm({ title: '', due: '', description: '' })
   }
+  const startEdit = (m) => {
+    setEditId(m.id); setCreating(false)
+    setForm({ title: m.title, due: m.due ? new Date(m.due * 1000).toISOString().slice(0, 10) : '', description: m.description || '' })
+  }
+  const saveForm = async () => {
+    setBusy(true); setMsg('')
+    const body = { title: form.title.trim(), description: form.description }
+    if (form.due) body.due = form.due
+    const d = editId
+      ? await api('PATCH', `/dsh/repos/${repo.owner}/${repo.name}/milestones/${editId}`, body)
+      : await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/milestones`, body)
+    setBusy(false)
+    if (d && d.ok !== false && !d.error) {
+      setCreating(false); setEditId(null); setForm({ title: '', due: '', description: '' }); reload()
+    } else setMsg((d && d.error) || 'failed')
+  }
+  const shown = (list || []).filter((m) => showClosed ? m.closed : !m.closed)
+  const openCount = (list || []).filter((m) => !m.closed).length
+  const closedCount = (list || []).filter((m) => m.closed).length
   return h('div', null,
-    h('div', { className: 'dgs-card', style: { marginBottom: 12 } },
+    h('div', { className: 'dgs-row', style: { margin: '8px 0 12px' } },
+      h('button', { className: 'dgs-btn ghost', onClick: () => setShowClosed(false) }, '开放里程碑 (' + openCount + ')'),
+      h('button', { className: 'dgs-btn ghost', onClick: () => setShowClosed(true) }, '已关闭里程碑 (' + closedCount + ')'),
+      h('span', { style: { flex: 1 } }),
+      h('button', { className: 'dgs-btn', onClick: startCreate }, '+ 创建里程碑')),
+    msg ? h('div', { className: 'dgs-err' }, msg) : null,
+    (creating || editId !== null) ? h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
       h('div', { className: 'dgs-row' },
-        h('input', { className: 'dgs-input', style: { maxWidth: 200 }, placeholder: '里程碑名', value: title, onChange: (e) => setTitle(e.target.value) }),
-        h('button', { className: 'dgs-btn', disabled: !title.trim(),
-          onClick: async () => {
-            const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/milestones`, { title })
-            if (d && d.ok !== false && !d.error) { setTitle(''); reload() } else setMsg((d && d.error) || 'failed')
-          } }, '+ 添加')),
-      msg ? h('div', { className: 'dgs-err' }, msg) : null),
+        h('span', { style: { fontWeight: 700 } }, editId !== null ? '编辑里程碑' : '创建里程碑'),
+        h('span', { style: { flex: 1 } }),
+        h('button', { className: 'dgs-btn ghost', onClick: () => { setCreating(false); setEditId(null) } }, t('back'))),
+      h('div', { style: { margin: '8px 0 0' } },
+        h('input', { className: 'dgs-input', placeholder: '里程碑标题', value: form.title, onChange: (e) => setForm({ ...form, title: e.target.value }) }),
+        h('div', { className: 'dgs-row', style: { marginTop: 8 } },
+          h('span', { className: 'dgs-sub', style: { minWidth: 60 } }, '截止日期'),
+          h('input', { type: 'date', className: 'dgs-input', style: { maxWidth: 180, flex: 'none' }, value: form.due, onChange: (e) => setForm({ ...form, due: e.target.value }) })),
+        h('textarea', { className: 'dgs-input', style: { marginTop: 8, minHeight: 60 }, placeholder: '描述', value: form.description, onChange: (e) => setForm({ ...form, description: e.target.value }) }),
+        h('div', { className: 'dgs-row', style: { marginTop: 8 } },
+          h('button', { className: 'dgs-btn', disabled: busy || !form.title.trim(), onClick: saveForm }, editId !== null ? t('save') : t('submit')))))
+      : null,
     list === null ? h('div', { className: 'dgs-empty' }, t('loading'))
-      : list.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
-      : list.map((m) => h('div', { key: m.id, className: 'dgs-issue' },
-          h('div', { className: 'dgs-row' },
-            h('span', { style: { fontWeight: 500, cursor: 'pointer' }, onClick: () => toggleMs(m) }, '◆ ' + m.title),
-            m.closed ? h('span', { className: 'dgs-badge closed' }, t('closedState')) : null,
-            h('span', { style: { flex: 1 } }),
-            bar(m),
-            h('span', { className: 'dgs-sub' }, `${m.open} ↑ / ${m.closedIssues} ✓`),
-            h('button', { className: 'dgs-btn ghost', onClick: async () => {
-              await api('PATCH', `/dsh/repos/${repo.owner}/${repo.name}/milestones/${m.id}`, { closed: !m.closed }); reload()
-            } }, m.closed ? t('reopen') : t('close')),
-            h('button', { className: 'dgs-btn danger', onClick: async () => {
-              await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/milestones/${m.id}`); reload()
-            } }, t('delete'))),
+      : shown.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
+      : shown.map((m) => {
+        const total = (m.open || 0) + (m.closedIssues || 0)
+        const pct = total ? Math.round((m.closedIssues || 0) * 100 / total) : 0
+        const overdue = m.due && !m.closed && m.due * 1000 < Date.now()
+        return h('div', { key: m.id, className: 'dgs-issue' },
+          h('div', { className: 'dgs-row', style: { alignItems: 'flex-start' } },
+            h('div', { style: { flex: 2, minWidth: 0 } },
+              h('span', { style: { fontWeight: 600, cursor: 'pointer' }, onClick: () => toggleMs(m) }, '◆ ' + m.title),
+              m.description ? h('div', { className: 'dgs-sub', style: { marginTop: 2 } }, m.description) : null,
+              m.due ? h('div', { className: 'dgs-sub', style: { marginTop: 2, color: overdue ? 'var(--dsw-alias-state-error-primary)' : undefined } },
+                '截止 ' + fmtDate(m.due * 1000) + (overdue ? ' · 已逾期' : '')) : null),
+            h('div', { style: { flex: 1, minWidth: 170 } },
+              h('div', { style: { height: 8, background: 'var(--dsw-alias-bg-layer-2)', borderRadius: 8, overflow: 'hidden', marginBottom: 4 } },
+                h('div', { style: { width: pct + '%', height: '100%', background: 'var(--dsw-alias-state-business-primary)' } })),
+              h('div', { className: 'dgs-sub' }, pct + '% 完成 · ' + (m.closedIssues || 0) + ' 已关闭 · ' + (m.open || 0) + ' 开放')),
+            h('div', { className: 'dgs-row', style: { flex: 'none' } },
+              h('button', { className: 'dgs-btn ghost', onClick: () => startEdit(m) }, t('edit')),
+              h('button', { className: 'dgs-btn ghost', onClick: async () => {
+                await api('PATCH', `/dsh/repos/${repo.owner}/${repo.name}/milestones/${m.id}`, { closed: !m.closed }); reload()
+              } }, m.closed ? '重新打开' : '关闭里程碑'),
+              h('button', { className: 'dgs-btn danger', onClick: async () => {
+                if (!confirm('删除里程碑 ' + m.title + ' ？')) return
+                await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/milestones/${m.id}`)
+                if (openMs === m.id) { setOpenMs(null); setMsIssues(null) }
+                reload()
+              } }, t('delete')))),
           openMs === m.id ? h('div', { style: { margin: '6px 0 2px 24px' } },
             msIssues === null ? h('span', { className: 'dgs-sub' }, t('loading'))
               : msIssues.length === 0 ? h('span', { className: 'dgs-sub' }, t('noIssues'))
               : msIssues.map((i) => h('div', { key: i.number, className: 'dgs-row', style: { padding: '2px 0' } },
                   h('span', { className: 'dgs-badge' + (i.state === 'open' ? ' ok' : ' closed') }, '#' + i.number),
-                  h('span', { style: { cursor: 'pointer' }, onClick: () => nav('/r/' + repo.owner + '/' + repo.name) }, i.title)))) : null)))
+                  h('span', { style: { cursor: 'pointer' }, onClick: () => nav('/r/' + repo.owner + '/' + repo.name) }, i.title)))) : null)
+      }))
 }
 
 // ── 仓库设置（基础信息 + 协作者） ──────────────────────────────────────────

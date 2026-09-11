@@ -47,7 +47,6 @@ const ZH = {
   noReleases: '暂无发版', noWiki: '暂无页面——创建第一个', deletePage: '删除页面',
   prMerged: '已合并', prOpen: '开启中', prClosed: '已关闭',
   labels: '标签管理', milestones: '里程碑', settings: '设置',
-  hint: 'dsh 账号即 Git 凭据',
 }
 const EN = {
   nav: 'Git', title: 'Repositories',
@@ -69,7 +68,6 @@ const EN = {
   noReleases: 'No releases', noWiki: 'No pages yet — create one', deletePage: 'Delete page',
   prMerged: 'Merged', prOpen: 'Open', prClosed: 'Closed',
   labels: 'Labels', milestones: 'Milestones', settings: 'Settings',
-  hint: 'Your dsh account is your Git credential',
 }
 
 // ── styles（dsw token 原生） ───────────────────────────────────────────────
@@ -83,7 +81,6 @@ function ensureStyles() {
 .dgs-page{position:fixed;inset:0;z-index:2147483000;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);font-size:14px}
 .dgs-head{display:flex;align-items:center;gap:12px;padding:12px 28px;border-bottom:1px solid var(--dsw-alias-border-l2);flex:none}
 .dgs-h1{font-size:16px;font-weight:700;margin:0}
-.dgs-hint{font-size:12px;color:var(--dsw-alias-label-tertiary)}
 .dgs-close{margin-left:auto;cursor:pointer;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:18px;padding:4px 8px;border-radius:8px}
 .dgs-close:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dgs-body{flex:1;overflow:auto;padding:20px 28px 32px;max-width:1100px;width:100%;margin:0 auto}
@@ -1068,9 +1065,7 @@ function GitPage({ onClose, t }) {
   const navItems = [['repos', t('myRepos')], ['explore', '探索'], ['orgs', '组织'], ['admin', '管理']]
   return h('div', { className: 'dgs-page' },
     h('div', { className: 'dgs-head' },
-      h('div', null,
-        h('div', { className: 'dgs-h1' }, t('title')),
-        h('div', { className: 'dgs-hint' }, t('hint'))),
+      h('span', { className: 'dgs-h1' }, t('title')),
       h('div', { className: 'dgs-row', style: { marginLeft: 8 } },
         navItems.map(([k, label]) =>
           h('button', { key: k, className: 'dgs-btn ghost',
@@ -1113,7 +1108,6 @@ function SettingsSection({ t }) {
   return h('div', { className: 'dgs-settings' },
     h('div', { className: 'dgs-card' },
       h('div', { className: 'dgs-h1' }, t('title')),
-      h('div', { className: 'dgs-hint', style: { margin: '4px 0 10px' } }, t('hint')),
       h('div', { className: 'dgs-row' },
         h('label', null, '启用'),
         h('input', { type: 'checkbox', checked: form.enabled, onChange: (e) => setForm({ ...form, enabled: e.target.checked }) })),

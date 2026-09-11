@@ -116,6 +116,9 @@ window.__ModuleLoader__.load({
     textarea.dgs-input{min-height:72px;resize:vertical}
     /* 卡片直属的输入控件不在 flex 行内，flex:1 失效——显式撑满 */
     textarea.dgs-input,.dgs-card>.dgs-input{width:100%;box-sizing:border-box;flex:none}
+    .dgs-subtabs{display:flex;gap:6px;margin-bottom:14px}
+    .dgs-subtab{cursor:pointer;border:none;border-radius:999px;padding:4px 14px;font-size:12.5px;font-weight:500;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary)}
+    .dgs-subtab.active{background:var(--dsw-alias-state-business-primary);color:#fff}
     .dgs-tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--dsw-alias-border-l2);margin-bottom:14px}
     .dgs-tab{cursor:pointer;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;font-weight:500;padding:8px 14px;border-radius:8px 8px 0 0;border-bottom:2px solid transparent}
     .dgs-tab.active{color:var(--dsw-alias-state-business-primary);border-bottom-color:var(--dsw-alias-state-business-primary)}
@@ -231,18 +234,16 @@ window.__ModuleLoader__.load({
               setCopied(true); setTimeout(() => setCopied(false), 1600)
             } }, copied ? t('copied') : t('copy'))) : null) : null,
         h('div', { className: 'dgs-tabs' },
-          ['files', 'commits', 'branches', 'tags', 'issues', 'pulls', 'wiki', 'releases', 'labels', 'milestones', 'settings'].map((k) =>
+          ['files', 'commits', 'branches', 'tags', 'issues', 'pulls', 'wiki', 'releases', 'settings'].map((k) =>
             h('button', { key: k, className: 'dgs-tab' + (tab === k ? ' active' : ''), onClick: () => setTab(k) }, t(k)))),
         tab === 'files' && h(FileTree, { repo, rev: rev || 'master', t, overview: ov, onOverview: setOv }),
         tab === 'commits' && h(Commits, { repo, rev: rev || 'master', t }),
         tab === 'branches' && h(Branches, { repo, t }),
         tab === 'tags' && h(Tags, { repo, ov, t }),
-        tab === 'issues' && h(Issues, { repo, t }),
+        tab === 'issues' && h(IssuesArea, { repo, t }),
         tab === 'pulls' && h(Pulls, { repo, t }),
         tab === 'wiki' && h(WikiView, { repo, t }),
         tab === 'releases' && h(Releases, { repo, t }),
-        tab === 'labels' && h(LabelsManage, { repo, t }),
-        tab === 'milestones' && h(MilestonesManage, { repo, t }),
         tab === 'settings' && h(RepoSettings, { repo, t }),
       )
     }
@@ -419,6 +420,17 @@ window.__ModuleLoader__.load({
           h('tr', { key: b.name },
             h('td', { style: { fontWeight: 500 } }, b.name),
             h('td', { className: 'dgs-sub', style: { textAlign: 'right' } }, (b.sha || '').slice(0, 10))))))
+    }
+
+    function IssuesArea({ repo, t }) {
+      const [sub, setSub] = useState('list')
+      return h('div', null,
+        h('div', { className: 'dgs-subtabs' },
+          [['list', '工单'], ['labels', '标签'], ['milestones', '里程碑']].map(([k, label]) =>
+            h('button', { key: k, className: 'dgs-subtab' + (sub === k ? ' active' : ''), onClick: () => setSub(k) }, label))),
+        sub === 'list' && h(Issues, { repo, t }),
+        sub === 'labels' && h(LabelsManage, { repo, t }),
+        sub === 'milestones' && h(MilestonesManage, { repo, t }))
     }
 
     function Issues({ repo, t }) {

@@ -735,7 +735,8 @@ function WikiView({ repo, t }) {
   const [page, setPage] = useState(null) // {name, html, content}
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
-  const [newName, setNewName] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [form, setForm] = useState({ title: '', content: '' })
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const reload = useCallback(() => {
@@ -744,45 +745,61 @@ function WikiView({ repo, t }) {
   }, [repo.owner, repo.name])
   useEffect(reload, [reload])
   const openPage = (name) => {
-    setEditing(false); setMsg('')
+    setEditing(false); setCreating(false); setMsg('')
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/wiki/${encodeURIComponent(name)}`)
       .then((d) => d.html !== undefined ? setPage(d) : setPage({ name, missing: true, content: '', html: '' }))
   }
-  return h('div', { className: 'dgs-row', style: { alignItems: 'flex-start' } },
-    h('div', { style: { width: 180, flex: 'none' } },
-      h('div', { style: { fontWeight: 700, margin: '4px 0 8px' } }, t('wiki')),
-      pages === null ? h('div', { className: 'dgs-sub' }, t('loading'))
-        : pages.length === 0 ? h('div', { className: 'dgs-sub' }, t('noWiki'))
-        : h('div', null, pages.map((p) =>
-            h('div', { key: p.name, className: 'dgs-crumb', style: { padding: '3px 0' }, onClick: () => openPage(p.name) }, p.name))),
-      h('div', { style: { borderTop: '1px solid var(--dsw-alias-border-l2)', margin: '10px 0' } }),
-      h('input', { className: 'dgs-input', style: { width: '100%', marginBottom: 6 }, placeholder: t('wikiTitle'), value: newName, onChange: (e) => setNewName(e.target.value) }),
-      h('button', { className: 'dgs-btn ghost', disabled: !newName.trim(),
-        onClick: () => { setPage({ name: newName.trim(), content: '', html: '' }); setDraft(''); setEditing(true); setNewName('') } }, '+ ' + t('newWiki'))),
-    h('div', { style: { flex: 1, minWidth: 0, paddingLeft: 16 } },
-      msg ? h('div', { className: 'dgs-err' }, msg) : null,
-      page === null ? h('div', { className: 'dgs-empty' }, pages && pages.length ? '← ' + t('wiki') : t('noWiki'))
-      : editing ? h('div', null,
-          h('div', { className: 'dgs-row', style: { margin: '4px 0 8px' } },
-            h('span', { style: { fontWeight: 600 } }, page.name + '.md'),
-            h('span', { style: { flex: 1 } }),
-            h('button', { className: 'dgs-btn ghost', onClick: () => page.html ? setEditing(false) : setPage(null) }, t('back')),
-            h('button', { className: 'dgs-btn', disabled: busy,
-              onClick: async () => {
-                setBusy(true); setMsg('')
-                const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/wiki/${encodeURIComponent(page.name)}`, { content: draft })
-                setBusy(false)
-                if (d.ok) { setEditing(false); reload(); openPage(page.name) } else setMsg(d.error || 'save failed')
-              } }, t('save'))),
-          h('textarea', { className: 'dgs-input', style: { minHeight: '50vh' }, value: draft, onChange: (e) => setDraft(e.target.value) }))
-      : page.missing ? h('div', { className: 'dgs-empty' }, '404')
-      : h('div', null,
-          h('div', { className: 'dgs-row', style: { margin: '4px 0 8px' } },
-            h('span', { style: { fontWeight: 600 } }, page.name),
-            h('span', { style: { flex: 1 } }),
-            h('button', { className: 'dgs-btn ghost', onClick: () => { setDraft(page.content || ''); setEditing(true) } }, t('edit'))),
-          h('div', { className: 'dgs-card' },
-            h('div', { className: 'dgs-md', dangerouslySetInnerHTML: { __html: page.html } })))))
+  return h('div', null,
+    h('div', { className: 'dgs-row', style: { margin: '8px 0 12px' } },
+      h('span', { style: { fontWeight: 700 } }, t('wiki')),
+      h('span', { style: { flex: 1 } }),
+      h('button', { className: 'dgs-btn', onClick: () => {
+        if (creating) { setCreating(false); return }
+        setCreating(true); setEditing(false); setPage(null); setForm({ title: '', content: '' })
+      } }, '+ ' + t('newWiki'))),
+    msg ? h('div', { className: 'dgs-err' }, msg) : null,
+    creating ? h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
+        h('input', { className: 'dgs-input', placeholder: t('wikiTitle'), value: form.title, onChange: (e) => setForm({ ...form, title: e.target.value }) }),
+        h('textarea', { className: 'dgs-input', style: { marginTop: 8, minHeight: '40vh' }, placeholder: '内容（Markdown）', value: form.content, onChange: (e) => setForm({ ...form, content: e.target.value }) }),
+        h('div', { className: 'dgs-row', style: { marginTop: 8 } },
+          h('button', { className: 'dgs-btn', disabled: busy || !form.title.trim(),
+            onClick: async () => {
+              setBusy(true); setMsg('')
+              const name = form.title.trim()
+              const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/wiki/${encodeURIComponent(name)}`, { content: form.content })
+              setBusy(false)
+              if (d.ok) { setCreating(false); reload(); openPage(name) } else setMsg(d.error || 'save failed')
+            } }, t('submit'))))
+      : h('div', { className: 'dgs-row', style: { alignItems: 'flex-start' } },
+        h('div', { style: { width: 180, flex: 'none' } },
+          h('div', { style: { fontWeight: 700, margin: '4px 0 8px' } }, t('wiki')),
+          pages === null ? h('div', { className: 'dgs-sub' }, t('loading'))
+            : pages.length === 0 ? h('div', { className: 'dgs-sub' }, t('noWiki'))
+            : h('div', null, pages.map((p) =>
+                h('div', { key: p.name, className: 'dgs-crumb', style: { padding: '3px 0' }, onClick: () => openPage(p.name) }, p.name)))),
+        h('div', { style: { flex: 1, minWidth: 0, paddingLeft: 16 } },
+          page === null ? h('div', { className: 'dgs-empty' }, pages && pages.length ? '← ' + t('wiki') : t('noWiki'))
+          : editing ? h('div', null,
+              h('div', { className: 'dgs-row', style: { margin: '4px 0 8px' } },
+                h('span', { style: { fontWeight: 600 } }, page.name + '.md'),
+                h('span', { style: { flex: 1 } }),
+                h('button', { className: 'dgs-btn ghost', onClick: () => page.html ? setEditing(false) : setPage(null) }, t('back')),
+                h('button', { className: 'dgs-btn', disabled: busy,
+                  onClick: async () => {
+                    setBusy(true); setMsg('')
+                    const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/wiki/${encodeURIComponent(page.name)}`, { content: draft })
+                    setBusy(false)
+                    if (d.ok) { setEditing(false); reload(); openPage(page.name) } else setMsg(d.error || 'save failed')
+                  } }, t('save'))),
+              h('textarea', { className: 'dgs-input', style: { minHeight: '50vh' }, value: draft, onChange: (e) => setDraft(e.target.value) }))
+          : page.missing ? h('div', { className: 'dgs-empty' }, '404')
+          : h('div', null,
+              h('div', { className: 'dgs-row', style: { margin: '4px 0 8px' } },
+                h('span', { style: { fontWeight: 600 } }, page.name),
+                h('span', { style: { flex: 1 } }),
+                h('button', { className: 'dgs-btn ghost', onClick: () => { setDraft(page.content || ''); setEditing(true) } }, t('edit'))),
+              h('div', { className: 'dgs-card' },
+                h('div', { className: 'dgs-md', dangerouslySetInnerHTML: { __html: page.html } }))))))
 }
 
 // ── 发版（列表 + 创建） ────────────────────────────────────────────────────

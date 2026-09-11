@@ -485,7 +485,7 @@ module.exports = {
               open && h(GitPage, {
                 onClose: () => setOpen(false),
                 t,
-                kernelUrl: status && status.urlLocal ? status.urlLocal : null,
+                kernelUrl: status && status.running ? (location.protocol + '//' + location.hostname + ':' + (status.port || 3400)) : null,
               }))
           }))
       } catch (e) { (globalThis.__skErrors = globalThis.__skErrors || []).push('sidebar:' + (e && e.message)); throw e }

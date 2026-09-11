@@ -462,12 +462,18 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
   // ── 里程碑 CRUD ───────────────────────────────────────────────
   m.get('/api/dsh/repos/:o/:r/milestones', async (c: Context) => {
     const ar = authRepo(c); if (!ar) return;
-    const rows = db.listMilestones(ar.repo.id, null).map((m: any) => ({
+    // 计数实时计算：milestone 行的 num_issues 存列在 dsh 通道下从不刷新
+    const rows = db.db().prepare(
+      `SELECT m.id, m.name, m.content, m.deadline_unix, m.is_closed,
+              (SELECT COUNT(*) FROM issue WHERE milestone_id = m.id) AS total,
+              (SELECT COUNT(*) FROM issue WHERE milestone_id = m.id AND is_closed = 1) AS done
+       FROM milestone m WHERE m.repo_id = ? ORDER BY m.deadline_unix ASC, m.id ASC`
+    ).all(ar.repo.id) as any[];
+    c.JSONSuccess(rows.map((m: any) => ({
       id: m.id, title: m.name, description: m.content,
       due: m.deadline_unix, closed: !!m.is_closed,
-      open: m.num_issues - m.num_closed_issues, closedIssues: m.num_closed_issues,
-    }));
-    c.JSONSuccess(rows);
+      open: m.total - m.done, closedIssues: m.done,
+    })));
   });
   m.post('/api/dsh/repos/:o/:r/milestones', async (c: Context) => {
     const ar = authRepo(c, true); if (!ar) return;

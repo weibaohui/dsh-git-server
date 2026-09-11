@@ -1419,6 +1419,9 @@ function PullDetail({ repo, idx, t, onBack }) {
   const [tab, setTab] = useState('conv')
   const [cmp, setCmp] = useState(null)
   const [selCommit, setSelCommit] = useState(null)
+  const [issue, setIssue] = useState(null)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState({ title: '', body: '' })
   const [allLabels, setAllLabels] = useState([])
   const [allMs, setAllMs] = useState([])
   const [collabs, setCollabs] = useState([])
@@ -1431,10 +1434,17 @@ function PullDetail({ repo, idx, t, onBack }) {
       if (found) api('GET', `/dsh/repos/${repo.owner}/${repo.name}/compare?base=${encodeURIComponent(found.base)}&head=${encodeURIComponent(found.head)}`).then((c) => c && c.commits && setCmp(c))
     })
     api('GET', `/repos/${repo.owner}/${repo.name}/issues/${idx}/comments`).then((d) => setComments(d.comments || []))
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/issues/${idx}`).then((d) => setIssue(d && d.number ? d : null))
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/labels`).then((d) => setAllLabels(Array.isArray(d) ? d : []))
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/milestones`).then((d) => setAllMs(Array.isArray(d) ? d : []))
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/collaborators`).then((d) => setCollabs(Array.isArray(d) ? d : []))
   }, [repo.owner, repo.name, idx])
+  const patchIssue = async (fields) => {
+    setBusy(true)
+    await api('PATCH', `/dsh/repos/${repo.owner}/${repo.name}/issues/${idx}`, fields)
+    setBusy(false)
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/issues/${idx}`).then((d) => setIssue(d && d.number ? d : null))
+  }
 
   if (pr === null) return h('div', { className: 'dgs-empty' }, t('loading'))
   const headRef = (pr.headUser || repo.owner) + '/' + pr.head
@@ -1442,18 +1452,31 @@ function PullDetail({ repo, idx, t, onBack }) {
   const side = h('div', null,
     h('div', { className: 'dgs-side-block' },
       h('div', { className: 'dgs-side-title' }, '标签 ⚙'),
-      allLabels.length === 0 ? h('div', { className: 'dgs-sub' }, '未选择标签') : null,
-      allLabels.map((l) => h('div', { key: l.id, className: 'dgs-sub', style: { margin: '4px 0' } },
+      !issue ? h('div', { className: 'dgs-sub' }, '…') : allLabels.length === 0 ? h('div', { className: 'dgs-sub' }, '未选择标签') : null,
+      issue && allLabels.map((l) => h('label', { key: l.id, className: 'dgs-sub', style: { display: 'flex', gap: 6, alignItems: 'center', margin: '4px 0', cursor: 'pointer' } },
+        h('input', { type: 'checkbox', checked: (issue.labels || []).some((x) => x.id === l.id),
+          onChange: (e) => {
+            const cur = new Set((issue.labels || []).map((x) => x.id))
+            if (e.target.checked) cur.add(l.id); else cur.delete(l.id)
+            patchIssue({ labels: [...cur] })
+          } }),
         h('span', { className: 'dgs-badge', style: { background: (l.color || '#70c24a') + '33' } }, l.name)))),
     h('div', { className: 'dgs-side-block' },
       h('div', { className: 'dgs-side-title' }, '里程碑 ⚙'),
-      allMs.length === 0 ? h('div', { className: 'dgs-sub' }, '未选择里程碑') : null,
-      allMs.map((m) => h('div', { key: m.id, className: 'dgs-sub', style: { margin: '4px 0' } }, '◆ ' + m.title))),
+      !issue ? h('div', { className: 'dgs-sub' }, '…')
+        : h('select', { className: 'dgs-input', style: { width: '100%' }, value: issue.milestone ? issue.milestone.id : '',
+            onChange: (e) => patchIssue({ milestone: Number(e.target.value) || 0 }) },
+            h('option', { value: '' }, '未选择里程碑'),
+            allMs.map((m) => h('option', { key: m.id, value: m.id }, m.title + (m.closed ? ' ✓' : ''))))),
     h('div', { className: 'dgs-side-block' },
       h('div', { className: 'dgs-side-title' }, '指派成员 ⚙'),
-      h('div', { className: 'dgs-sub' }, pr.assignee || '未指派成员')),
+      !issue ? h('div', { className: 'dgs-sub' }, '…')
+        : h('select', { className: 'dgs-input', style: { width: '100%' }, value: issue.assignee || '',
+            onChange: (e) => patchIssue({ assignee: e.target.value }) },
+            h('option', { value: '' }, '未指派成员'),
+            collabs.map((u) => h('option', { key: u.name, value: u.name }, u.name)))),
     h('div', { className: 'dgs-side-block' },
-      h('div', { className: 'dgs-side-title' }, '1 名参与者'),
+      h('div', { className: 'dgs-side-title' }, (issue && issue.participants || 1) + ' 名参与者'),
       h('div', { className: 'dgs-sub' }, pr.author || '')))
   const mergeBox = pr.state === 'open' ? h('div', { className: 'dgs-card', style: { margin: '10px 0', borderColor: 'var(--dsw-alias-state-success-primary)55' } },
     h('div', { className: 'dgs-row', style: { gap: 8 } },
@@ -1522,12 +1545,23 @@ function PullDetail({ repo, idx, t, onBack }) {
       h('button', { className: 'dgs-btn ghost', onClick: onBack }, t('back')),
       h('span', { className: 'dgs-h1', style: { fontSize: 17 } }, '#' + idx + ' ' + pr.title),
       h('span', { style: { flex: 1 } }),
-      pr.state === 'open' ? h('button', { className: 'dgs-btn ghost', onClick: () => {} }, '编辑') : null),
+      h('button', { className: 'dgs-btn ghost', onClick: () => {
+        if (!issue) return
+        setDraft({ title: issue.title, body: issue.body })
+        setEditing(!editing)
+      } }, '编辑')),
     h('div', { className: 'dgs-row', style: { marginBottom: 10 } },
       h('span', { className: 'dgs-issue-num' }, pr.state === 'open' ? '开启中' : pr.state === 'merged' ? '已合并' : '已关闭'),
       h('span', { className: 'dgs-sub' },
         (pr.author || '') + ' 请求将 ' + (cmp ? cmp.commits.length : 'N') + ' 次代码提交从 ' + headRef + ' 合并至 ' + baseRef)),
     msg ? h('div', { className: 'dgs-err' }, msg) : null,
+    editing && issue ? h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
+      h('input', { className: 'dgs-input', value: draft.title, onChange: (e) => setDraft({ ...draft, title: e.target.value }) }),
+      h('textarea', { className: 'dgs-input', style: { marginTop: 8, minHeight: 100 }, value: draft.body, onChange: (e) => setDraft({ ...draft, body: e.target.value }) }),
+      h('div', { className: 'dgs-row', style: { marginTop: 8, justifyContent: 'flex-end' } },
+        h('button', { className: 'dgs-btn ghost', onClick: () => setEditing(false) }, '取消'),
+        h('button', { className: 'dgs-btn', disabled: busy || !draft.title.trim(),
+          onClick: async () => { await patchIssue({ title: draft.title, body: draft.body }); setEditing(false) } }, '保存'))) : null,
     h('div', { className: 'dgs-subtabs', style: { margin: '8px 0 12px' } },
       tabBtn('conv', '对话内容', (comments || []).length),
       tabBtn('commits', '代码提交', cmp ? cmp.commits.length : ''),

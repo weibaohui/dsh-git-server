@@ -73,7 +73,37 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
         }
       }
     } catch { /* no readme */ }
-    c.JSONSuccess({ defaultBranch: def, branches, tags, readmeHtml });
+    const numCommits = Number((await git.git(dir, 'rev-list', '--count', '--end-of-options', def))?.toString('utf8').trim() || 0);
+    const numReleases = (db.db().prepare('SELECT COUNT(*) AS c FROM release WHERE repo_id = ?').get(repo.id) as any).c;
+    c.JSONSuccess({
+      defaultBranch: def, branches, tags, readmeHtml,
+      name: repo.name, owner: repo.OwnerName(), description: repo.description || '',
+      private: !!repo.is_private, numCommits, numBranches: branches.length, numTags: tags.length, numReleases,
+      numStars: repo.num_stars || 0, numForks: repo.num_forks || 0, numWatches: repo.num_watches || 0,
+    });
+  });
+
+  // ── 文件列表（带每项最近提交） ────────────────────────────────
+  m.get('/api/dsh/repos/:o/:r/tree', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const dir = ar.repo.RepoPath();
+    const ref = c.Query('ref') || ar.repo.default_branch || conf.defaultBranch;
+    const p = c.Query('path');
+    const tree = await git.lsTree(dir, ref, p || '');
+    if (!tree) { c.JSON(404, { error: 'not found' }); return; }
+    const entries = [];
+    for (const e of tree.entries) {
+      const epath = p ? p + '/' + e.name : e.name;
+      let size = 0;
+      if (e.type === 'blob') size = Number((await git.git(dir, 'cat-file', '-s', e.sha))?.toString('utf8').trim() || 0);
+      const out = (await git.git(dir, 'log', '-1', '--pretty=format:%h%x1f%s%x1f%cs', '--end-of-options', ref, '--', epath))?.toString('utf8') ?? '';
+      const [lsha, lmsg, ldate] = out.split('\x1f');
+      entries.push({
+        name: e.name, type: e.type, path: epath, size,
+        last: lsha ? { sha: lsha, msg: (lmsg || '').slice(0, 90), date: Number(ldate) * 1000 } : null,
+      });
+    }
+    c.JSONSuccess({ entries });
   });
 
   // ── PR 列表（issue is_pull） ──────────────────────────────────
@@ -619,10 +649,25 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     c.JSONSuccess(rows.map((r) => ({
       id: r.id, tag: r.tag_name, title: r.title,
       noteHtml: r.note ? sanitizeHTML(markdown(r.note, conf.subpath + '/', {})) : '',
+      noteRaw: r.note || '',
       author: r.author, createdAt: r.created_unix,
     })));
   });
 
+  m.patch('/api/dsh/repos/:o/:r/releases/:id', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const body = await c.form();
+    const sets: string[] = []; const args: any[] = [];
+    if (body.title !== undefined) { sets.push('title = ?'); args.push(String(body.title)); }
+    if (body.note !== undefined) { sets.push('note = ?'); args.push(String(body.note)); }
+    if (sets.length) db.db().prepare(`UPDATE release SET ${sets.join(', ')} WHERE id = ? AND repo_id = ?`).run(...args, c.ParamsInt64(':id'), ar.repo.id);
+    c.JSONSuccess({ ok: true });
+  });
+  m.delete('/api/dsh/repos/:o/:r/releases/:id', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    db.db().prepare('DELETE FROM release WHERE id = ? AND repo_id = ?').run(c.ParamsInt64(':id'), ar.repo.id);
+    c.JSONSuccess({ ok: true });
+  });
   m.post('/api/dsh/repos/:o/:r/releases', async (c: Context) => {
     const ar = authRepo(c, true);
     if (!ar) return;

@@ -122,6 +122,11 @@ window.__ModuleLoader__.load({
     .dgs-subtabs{display:flex;gap:6px;margin-bottom:14px}
     .dgs-subtab{cursor:pointer;border:none;border-radius:999px;padding:4px 14px;font-size:12.5px;font-weight:500;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary)}
     .dgs-subtab.active{background:var(--dsw-alias-state-business-primary);color:#fff}
+    .dgs-stats{display:flex;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden;margin-bottom:8px}
+    .dgs-stats-item{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 0;cursor:pointer;color:var(--dsw-alias-label-secondary);border-right:1px solid var(--dsw-alias-border-l2)}
+    .dgs-stats-item:last-child{border-right:none}
+    .dgs-stats-item:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+    .dgs-stats-num{font-weight:700;color:var(--dsw-alias-label-primary)}
     .dgs-pill{cursor:pointer;border:1px solid var(--dsw-alias-state-success-primary)55;background:transparent;color:var(--dsw-alias-state-success-primary);border-radius:6px;padding:4px 12px;font-size:12px;font-weight:500}
     .dgs-pill.active{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent)}
     .dgs-pill.closed{border-color:var(--dsw-alias-state-error-primary)55;color:var(--dsw-alias-state-error-primary)}
@@ -261,29 +266,36 @@ window.__ModuleLoader__.load({
             h('button', { className: 'dgs-btn ghost', onClick: () => toggle('watch') }, watch.on ? '👁 Unwatch' : '👁 Watch'),
             h('span', { className: 'dgs-labeled-count' }, watch.count)) : null,
           h('button', { className: 'dgs-btn ghost', disabled: forkBusy, onClick: fork }, '⑂ Fork'),
-          branchSel,
         ),
         msg ? h('div', { className: 'dgs-err' }, msg) : null,
-        ov ? h('div', { style: { margin: '0 0 10px' } },
-          ov.description ? h('div', { className: 'dgs-sub', style: { marginBottom: 6 } }, ov.description) : null,
-          h('div', { className: 'dgs-row', style: { gap: 14 } },
-            h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => setTab('commits') }, '⎇ ' + (ov.numCommits || 0) + ' 提交'),
-            h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => setTab('branches') }, '⑂ ' + (ov.numBranches || 0) + ' 分支'),
-            h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => setTab('releases') }, '◎ ' + (ov.numTags || 0) + ' 标签 · ⌘ ' + (ov.numReleases || 0) + ' 发版'),
-            h('span', { className: 'dgs-sub' }, '⑂ ' + (ov.numForks || 0) + ' fork')),
-          cloneUrl ? h('div', { className: 'dgs-row', style: { margin: '8px 0 0' } },
-            h('input', { className: 'dgs-input', readOnly: true, value: cloneUrl, onFocus: (e) => e.target.select(), style: { maxWidth: 420 } }),
-            h('button', { className: 'dgs-btn ghost', onClick: () => {
-              try { navigator.clipboard.writeText(cloneUrl) } catch {}
-              setCopied(true); setTimeout(() => setCopied(false), 1600)
-            } }, copied ? t('copied') : t('copy')),
-            h('a', { className: 'dgs-btn ghost', href: `/dsh-git-server/api/dsh/repos/${repo.owner}/${repo.name}/archive/${encodeURIComponent(rev || 'master')}.zip`, download: `${repo.name}-${rev}.zip` }, '⭳ 下载')) : null) : null,
         h('div', { className: 'dgs-tabs' },
           ['files', 'issues', 'pulls', 'wiki', 'releases', 'settings'].map((k) =>
             h('button', { key: k, className: 'dgs-tab' + (tab === k ? ' active' : ''), onClick: () => setTab(k) }, t(k)))),
-          (tab === 'commits' || tab === 'branches' || tab === 'tags') ? h('div', { className: 'dgs-tabs' },
-            h('button', { className: 'dgs-tab', onClick: () => setTab('files') }, t('files')),
-            h('button', { className: 'dgs-tab active' }, tab === 'commits' ? t('commits') : tab === 'branches' ? t('branches') : '标签')) : null,
+        (tab === 'commits' || tab === 'branches' || tab === 'tags') ? h('div', { className: 'dgs-tabs' },
+          h('button', { className: 'dgs-tab', onClick: () => setTab('files') }, t('files')),
+          h('button', { className: 'dgs-tab active' }, tab === 'commits' ? t('commits') : tab === 'branches' ? t('branches') : '标签'))
+        : null,
+        ov && tab === 'files' ? h('div', { style: { margin: '0 0 10px' } },
+          ov.description ? h('div', { className: 'dgs-sub', style: { marginBottom: 8 } }, ov.description) : h('div', { className: 'dgs-sub', style: { marginBottom: 8, fontStyle: 'italic' } }, '暂无描述'),
+          h('div', { className: 'dgs-stats' },
+            h('a', { className: 'dgs-stats-item', onClick: () => setTab('commits') },
+              h('span', { className: 'dgs-stats-num' }, '⎇ ' + (ov.numCommits || 0)), ' 提交历史'),
+            h('a', { className: 'dgs-stats-item', onClick: () => setTab('branches') },
+              h('span', { className: 'dgs-stats-num' }, '⑂ ' + (ov.numBranches || 0)), ' 代码分支'),
+            h('a', { className: 'dgs-stats-item', onClick: () => setTab('releases') },
+              h('span', { className: 'dgs-stats-num' }, '◎ ' + (ov.numReleases || 0)), ' 版本发布')),
+          h('div', { className: 'dgs-row', style: { margin: '8px 0 0' } },
+            branchSel,
+            h('span', { style: { flex: 1 } }),
+            cloneUrl ? h('span', { className: 'dgs-labeled' },
+              h('span', { className: 'dgs-labeled-count', style: { borderLeft: 'none', borderRight: '1px solid var(--dsw-alias-border-l2)' } }, 'HTTP'),
+              h('button', { className: 'dgs-btn ghost', style: { borderRadius: 0, padding: '4px 8px', fontFamily: 'ui-monospace,monospace', fontSize: 12, maxWidth: 340, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, onClick: () => {
+                try { navigator.clipboard.writeText(cloneUrl) } catch {}
+                setCopied(true); setTimeout(() => setCopied(false), 1600)
+              }, title: cloneUrl }, copied ? t('copied') : cloneUrl.replace('git clone ', '')),
+              h('a', { className: 'dgs-btn ghost', style: { borderRadius: '0 8px 8px 0', borderLeft: 'none' }, href: `/dsh-git-server/api/dsh/repos/${repo.owner}/${repo.name}/archive/${encodeURIComponent(rev || 'master')}.zip`, download: `${repo.name}-${rev}.zip`, title: '下载' }, '⭳'))
+            : null))
+        : null,
         tab === 'files' && h(FileTree, { repo, rev: rev || 'master', t, overview: ov, onOverview: setOv }),
         tab === 'commits' && h(Commits, { repo, rev: rev || 'master', t }),
         tab === 'branches' && h(Branches, { repo, t, onNewPR: (head, base) => { setPrPreset({ head, base }); setTab('pulls') } }),

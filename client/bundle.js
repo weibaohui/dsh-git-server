@@ -122,6 +122,13 @@ window.__ModuleLoader__.load({
     .dgs-subtabs{display:flex;gap:6px;margin-bottom:14px}
     .dgs-subtab{cursor:pointer;border:none;border-radius:999px;padding:4px 14px;font-size:12.5px;font-weight:500;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary)}
     .dgs-subtab.active{background:var(--dsw-alias-state-business-primary);color:#fff}
+    .dgs-pill{cursor:pointer;border:1px solid var(--dsw-alias-state-success-primary)55;background:transparent;color:var(--dsw-alias-state-success-primary);border-radius:6px;padding:4px 12px;font-size:12px;font-weight:500}
+    .dgs-pill.active{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent)}
+    .dgs-pill.closed{border-color:var(--dsw-alias-state-error-primary)55;color:var(--dsw-alias-state-error-primary)}
+    .dgs-pill.closed.active{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)}
+    .dgs-issue-num{flex:none;width:34px;height:34px;border-radius:6px;background:var(--dsw-alias-state-success-primary);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+    .dgs-issue-num.closed{background:var(--dsw-alias-label-tertiary)}
+    .dgs-issue-title{font-weight:500;color:var(--dsw-alias-state-business-primary)}
     .dgs-tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--dsw-alias-border-l2);margin-bottom:14px}
     .dgs-tab{cursor:pointer;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;font-weight:500;padding:8px 14px;border-radius:8px 8px 0 0;border-bottom:2px solid transparent}
     .dgs-tab.active{color:var(--dsw-alias-state-business-primary);border-bottom-color:var(--dsw-alias-state-business-primary)}
@@ -361,16 +368,23 @@ window.__ModuleLoader__.load({
     function IssuesArea({ repo, t }) {
       const [sub, setSub] = useState('list')
       const [labelJump, setLabelJump] = useState(null)
+      const subLink = (k, label) => h('a', { key: k, style: { cursor: 'pointer', marginRight: 18, fontSize: 13,
+          color: sub === k ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-label-secondary)',
+          fontWeight: sub === k ? 600 : 400 },
+        onClick: () => setSub(k) }, label)
+      const [createSignal, setCreateSignal] = useState(0)
       return h('div', null,
-        h('div', { className: 'dgs-subtabs' },
-          [['list', '工单'], ['labels', '标签'], ['milestones', '里程碑']].map(([k, label]) =>
-            h('button', { key: k, className: 'dgs-subtab' + (sub === k ? ' active' : ''), onClick: () => setSub(k) }, label))),
-        sub === 'list' && h(Issues, { repo, t, presetLabel: labelJump, onPresetDone: () => setLabelJump(null) }),
+        h('div', { className: 'dgs-row', style: { margin: '0 0 12px' } },
+          subLink('labels', '标签管理'),
+          subLink('milestones', '里程碑'),
+          h('span', { style: { flex: 1 } }),
+          sub === 'list' ? h('button', { className: 'dgs-btn', onClick: () => setCreateSignal((n) => n + 1) }, t('issueNew')) : null),
+        sub === 'list' && h(Issues, { repo, t, presetLabel: labelJump, onPresetDone: () => setLabelJump(null), createSignal }),
         sub === 'labels' && h(LabelsManage, { repo, t, onFilterLabel: (lid) => { setLabelJump(lid); setSub('list') } }),
         sub === 'milestones' && h(MilestonesManage, { repo, t }))
     }
 
-    function Issues({ repo, t, presetLabel, onPresetDone }) {
+    function Issues({ repo, t, presetLabel, onPresetDone, createSignal }) {
       const [state, setState] = useState('open')
       const [flt, setFlt] = useState({ label: '', milestone: '', assignee: '' })
       useEffect(() => {
@@ -381,6 +395,7 @@ window.__ModuleLoader__.load({
       const [list, setList] = useState(null)
       const [meta, setMeta] = useState({ labels: [], milestones: [], collabs: [] })
       const [creating, setCreating] = useState(false)
+      useEffect(() => { if (createSignal) setCreating(true) }, [createSignal])
       const [openIdx, setOpenIdx] = useState(null)
       const reload = useCallback(() => {
         setList(null)
@@ -405,10 +420,8 @@ window.__ModuleLoader__.load({
         items.map((x) => h('option', { key: x.id || x.name, value: String(x.id || x.name) }, x.name)))
       return h('div', null,
         h('div', { className: 'dgs-row', style: { margin: '8px 0 12px' } },
-          h('button', { className: 'dgs-btn ghost', onClick: () => setState('open') }, t('openState')),
-          h('button', { className: 'dgs-btn ghost', onClick: () => setState('closed') }, t('closedState')),
-          h('span', { style: { flex: 1 } }),
-          h('button', { className: 'dgs-btn', onClick: () => setCreating(!creating) }, t('issueNew'))),
+          h('button', { className: 'dgs-pill' + (state === 'open' ? ' active' : ''), onClick: () => setState('open') }, '⊘ ' + t('openState')),
+          h('button', { className: 'dgs-pill' + (state === 'closed' ? ' active closed' : ''), onClick: () => setState('closed') }, '✓ ' + t('closedState'))),
         creating ? h(NewIssue, { repo, t, onDone: () => { setCreating(false); reload() } }) : null,
         h('div', { className: 'dgs-row', style: { margin: '0 0 12px' } },
           fltSel('label', meta.labels, '标签'),
@@ -425,18 +438,22 @@ window.__ModuleLoader__.load({
       )
 
       function issueRow(i) {
-        const badge = h('span', { className: 'dgs-badge' + (i.state === 'open' ? ' ok' : ' closed') }, '#' + i.number)
-        const title = h('span', { style: { fontWeight: 500 } }, i.title)
+        const badge = h('span', { className: 'dgs-issue-num' + (i.state === 'open' ? '' : ' closed') }, '#' + i.number)
+        const title = h('span', { className: 'dgs-issue-title' }, i.title)
         const labels = (i.labels || []).map((l) =>
           h('span', { key: l.id, className: 'dgs-badge', style: { background: (l.color || '#70c24a') + '33', borderColor: l.color || '#70c24a' } }, l.name))
         const meta = h('div', { className: 'dgs-row', style: { marginTop: 4, gap: 6 } },
-          h('span', { className: 'dgs-sub' }, (i.user || '') + ' · ' + timeAgo(i.updatedAt) + ' · ' + (i.comments || 0) + ' ' + t('comment')),
+          h('span', { className: 'dgs-sub' }, '由 ' + (i.user || '') + ' 于 ' + timeAgo(i.updatedAt) + ' 创建'),
           i.milestone ? h('span', { className: 'dgs-badge' }, '◆ ' + i.milestone.title) : null,
           i.assignee ? h('span', { className: 'dgs-badge' }, '@' + i.assignee) : null)
         return h('div', {
-          key: i.number, className: 'dgs-issue', style: { cursor: 'pointer' },
+          key: i.number, className: 'dgs-issue', style: { cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 },
           onClick: () => setOpenIdx(i.number),
-        }, h('div', { className: 'dgs-row' }, badge, title, h('span', { style: { flex: 1 } }), labels), meta)
+        }, badge,
+          h('div', { style: { flex: 1, minWidth: 0 } },
+            h('div', { className: 'dgs-row', style: { gap: 6 } }, title, labels),
+            meta),
+          h('span', { className: 'dgs-sub', style: { flex: 'none' } }, '💬 ' + (i.comments || 0)))
       }
     }
 

@@ -302,6 +302,10 @@ window.__ModuleLoader__.load({
       const [err, setErr] = useState('')
       const [readme, setReadme] = useState(null)
       const [blameOn, setBlameOn] = useState(false)
+      const [newFile, setNewFile] = useState(null) // {mode:'create'|'upload'}
+      const [nf, setNf] = useState({ path: '', content: '', message: '' })
+      const [busy, setBusy] = useState(false)
+      const [msg, setMsg] = useState('')
       const load = useCallback((p) => {
         setFile(null); setEntries(null); setErr(''); setBlameOn(false)
         api('GET', `/dsh/repos/${repo.owner}/${repo.name}/tree?ref=${encodeURIComponent(rev)}&path=${encodeURIComponent(p)}`)
@@ -332,13 +336,63 @@ window.__ModuleLoader__.load({
           })
       }
       const crumbs = ['', ...path ? path.split('/') : []]
+      const startCreate = (mode) => {
+        setNewFile(mode); setMsg('')
+        setNf({ path: '', content: '', message: '' })
+      }
+      const submitFile = async () => {
+        setBusy(true); setMsg('')
+        const full = (path ? path + '/' : '') + nf.path.trim()
+        const body = { path: full, branch: rev, message: nf.message }
+        if (newFile === 'upload') {
+          if (!nf.content) { setBusy(false); setMsg('请选择文件'); return }
+          body.contentBase64 = btoa(unescape(encodeURIComponent(nf.content)))
+          body.overwrite = true
+        } else {
+          if (!nf.path.trim()) { setBusy(false); setMsg('文件名必填'); return }
+          body.content = nf.content
+        }
+        const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/files`, body)
+        setBusy(false)
+        if (d && d.ok) { setNewFile(null); load(path) }
+        else setMsg((d && d.error) || 'failed')
+      }
       return h('div', null,
-        h('div', { className: 'dgs-crumbs' },
-          h('span', { className: 'dgs-crumb cur' }, rev),
-          path.split('/').filter(Boolean).map((seg, i, arr) =>
-            h('span', { key: i },
-              h('span', { className: 'dgs-crumb', onClick: () => setPath(arr.slice(0, i + 1).join('/')) }, seg),
-              i < arr.length - 1 ? h('span', { className: 'dgs-sub' }, '/') : null))),
+        h('div', { className: 'dgs-row', style: { marginBottom: 8 } },
+          h('div', { className: 'dgs-crumbs', style: { margin: 0 } },
+            h('span', { className: 'dgs-crumb cur' }, rev),
+            path.split('/').filter(Boolean).map((seg, i, arr) =>
+              h('span', { key: i },
+                h('span', { className: 'dgs-crumb', onClick: () => setPath(arr.slice(0, i + 1).join('/')) }, seg),
+                i < arr.length - 1 ? h('span', { className: 'dgs-sub' }, '/') : null))),
+          h('span', { style: { flex: 1 } }),
+          h('button', { className: 'dgs-btn', onClick: () => startCreate('create') }, '新的文件'),
+          h('button', { className: 'dgs-btn ghost', onClick: () => startCreate('upload') }, '上传文件')),
+        msg ? h('div', { className: 'dgs-err' }, msg) : null,
+        newFile ? h('div', { className: 'dgs-card', style: { margin: '8px 0' } },
+          h('div', { className: 'dgs-row', style: { marginBottom: 8 } },
+            h('span', { style: { fontWeight: 700 } }, newFile === 'create' ? '新建文件' : '上传文件'),
+            h('span', { style: { flex: 1 } }),
+            h('button', { className: 'dgs-btn ghost', onClick: () => setNewFile(null) }, t('back'))),
+          h('div', { className: 'dgs-row' },
+            h('span', { className: 'dgs-sub' }, (path || '') + '/'),
+            h('input', { className: 'dgs-input', placeholder: newFile === 'create' ? '文件名（如 docs/guide.md）' : '目标路径', value: nf.path, onChange: (e) => setNf({ ...nf, path: e.target.value }) })),
+          newFile === 'create' ? h('textarea', { className: 'dgs-input', style: { marginTop: 8, minHeight: 160 }, placeholder: '文件内容', value: nf.content, onChange: (e) => setNf({ ...nf, content: e.target.value }) })
+            : h('input', { type: 'file', style: { marginTop: 8 }, onChange: async (e) => {
+                const f = e.target.files && e.target.files[0]
+                if (!f) return
+                if (!nf.path) setNf((x) => ({ ...x, path: f.name }))
+                setNf((x) => ({ ...x, content: 'BIN:' + f.name }))
+                const buf = await f.arrayBuffer()
+                let bin = ''
+                new Uint8Array(buf).forEach((b) => { bin += String.fromCharCode(b) })
+                setNf((x) => ({ ...x, content: btoa(bin) }))
+              } }),
+          h('div', { className: 'dgs-row', style: { marginTop: 8 } },
+            h('input', { className: 'dgs-input', placeholder: '提交信息（可选）', value: nf.message, onChange: (e) => setNf({ ...nf, message: e.target.value }) })),
+          h('div', { className: 'dgs-row', style: { marginTop: 8, justifyContent: 'flex-end' } },
+            h('button', { className: 'dgs-btn', disabled: busy || !nf.path.trim(), onClick: submitFile }, '提交修改')))
+          : null,
         err ? h('div', { className: 'dgs-err' }, err) : null,
         file ? h('div', null,
           h('div', { className: 'dgs-row', style: { margin: '8px 0' } },
@@ -361,6 +415,7 @@ window.__ModuleLoader__.load({
       )
 
       function renderDir() {
+        const head = entries.find((e) => e.last)
         const rows = entries.map((e) =>
           h('tr', { key: e.path, style: { cursor: 'pointer' }, onClick: () => openEntry(e) },
             h('td', { style: { width: 24 } }, h('span', { className: 'dgs-ico' }, e.type === 'dir' || e.type === 'tree' ? '📁' : '📄')),
@@ -368,9 +423,15 @@ window.__ModuleLoader__.load({
               e.last ? h('div', { className: 'dgs-sub' }, (e.last.msg || '')) : null,
               e.last ? h('div', { className: 'dgs-sub', style: { marginTop: 1 } }, timeAgo(e.last.date)) : null),
             h('td', { className: 'dgs-sub', style: { textAlign: 'right', width: 70 } }, e.type === 'blob' ? fmtSize(e.size) : '')))
+        const headRow = head ? h('div', { className: 'dgs-row', style: { padding: '8px 0 10px', borderBottom: '1px solid var(--dsw-alias-border-l2)', marginBottom: 4 } },
+          h('span', { style: { width: 26, height: 26, borderRadius: 6, background: 'var(--dsw-alias-bg-layer-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: 'var(--dsw-alias-label-secondary)' } }, (head.last.author || '?').slice(0, 1).toUpperCase()),
+          h('span', { className: 'dgs-badge' }, head.last.sha),
+          h('span', { style: { fontWeight: 500 } }, head.last.msg),
+          h('span', { style: { flex: 1 } }),
+          h('span', { className: 'dgs-sub' }, timeAgo(head.last.date))) : null
         const table = entries.length === 0
           ? h('div', { className: 'dgs-empty' }, t('emptyDir'))
-          : h('table', { className: 'dgs-table' }, h('tbody', null, rows))
+          : h('div', null, headRow, h('table', { className: 'dgs-table' }, h('tbody', null, rows)))
         const readmeEl = (path === '' && overview && overview.readmeHtml)
           ? h('div', { className: 'dgs-card', style: { marginTop: 12 } },
               h('div', { style: { fontWeight: 700, marginBottom: 8 } }, t('readme')),

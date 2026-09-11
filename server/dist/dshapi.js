@@ -115,11 +115,11 @@ export function registerDshRoutes(m) {
             let size = 0;
             if (e.type === 'blob')
                 size = Number((await git.git(dir, 'cat-file', '-s', e.sha))?.toString('utf8').trim() || 0);
-            const out = (await git.git(dir, 'log', '-1', '--pretty=format:%h%x1f%s%x1f%ct', '--end-of-options', ref, '--', epath))?.toString('utf8') ?? '';
-            const [lsha, lmsg, ldate] = out.split('\x1f');
+            const out = (await git.git(dir, 'log', '-1', '--pretty=format:%h%x1f%s%x1f%ct%x1f%an', '--end-of-options', ref, '--', epath))?.toString('utf8') ?? '';
+            const [lsha, lmsg, ldate, lauthor] = out.split('\x1f');
             entries.push({
                 name: e.name, type: e.type, path: epath, size,
-                last: lsha ? { sha: lsha, msg: (lmsg || '').slice(0, 90), date: Number(ldate) * 1000 } : null,
+                last: lsha ? { sha: lsha, msg: (lmsg || '').slice(0, 90), date: Number(ldate) * 1000, author: lauthor || '' } : null,
             });
         }
         c.JSONSuccess({ entries });
@@ -344,6 +344,46 @@ export function registerDshRoutes(m) {
         const diff = (await git.git(dir, 'diff', '--stat', '--end-of-options', `${base}...${head}`))?.toString('utf8') ?? '';
         const diffFull = (await git.git(dir, 'diff', '--unified=3', '--end-of-options', `${base}...${head}`))?.toString('utf8') ?? '';
         c.JSONSuccess({ base, head, commits, diffStat: diff, diff: diffFull });
+    });
+    // ── 网页新建/上传文件（新的文件 / 上传文件） ────────────────────
+    m.post('/api/dsh/repos/:o/:r/files', async (c) => {
+        const ar = authRepo(c, true);
+        if (!ar)
+            return;
+        const body = await c.form();
+        const fileName = String(body.path ?? '').replace(/\\/g, '/').replace(/^\/+/, '').trim();
+        if (!fileName || fileName.includes('..')) {
+            c.JSON(422, { error: '路径非法' });
+            return;
+        }
+        const branch = String(body.branch ?? '') || ar.repo.default_branch || conf.defaultBranch;
+        const message = String(body.message ?? '') || (body.overwrite ? `Update ${fileName}` : `Create ${fileName}`);
+        const base64 = String(body.contentBase64 ?? '');
+        const content = base64 ? Buffer.from(base64, 'base64') : Buffer.from(String(body.content ?? ''), 'utf8');
+        const dir = ar.repo.RepoPath();
+        const tmp = path.join(conf.appDataPath, 'tmp', 'newfile-' + Date.now());
+        fs.mkdirSync(tmp, { recursive: true });
+        try {
+            await git.git(process.cwd(), 'clone', '-q', '-b', branch, dir, tmp);
+            const fp = path.join(tmp, fileName);
+            fs.mkdirSync(path.dirname(fp), { recursive: true });
+            const exists = fs.existsSync(fp);
+            if (exists && !body.overwrite) {
+                c.JSON(409, { error: '同名文件已存在（勾选覆盖可更新）' });
+                return;
+            }
+            fs.writeFileSync(fp, content);
+            await git.git(tmp, 'add', '--', fileName);
+            await git.git(tmp, 'commit', '-q', `--author=${ar.user.name} <${ar.user.email}>`, '-m', message);
+            await git.git(tmp, 'push', '-q', 'origin', `HEAD:refs/heads/${branch}`);
+            c.JSONSuccess({ ok: true, path: fileName });
+        }
+        catch (e) {
+            c.JSON(500, { error: String(e?.message ?? e).slice(0, 200) });
+        }
+        finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
     });
     // ── 源码下载（archive zip/tar.gz，二进制流） ──────────────────
     m.get('/api/dsh/repos/:o/:r/archive/*', async (c) => {

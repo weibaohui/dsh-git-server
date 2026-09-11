@@ -216,6 +216,7 @@ window.__ModuleLoader__.load({
     function RepoBrowser({ repo, t, onBack }) {
       const [tab, setTab] = useState('files')
       const [prPreset, setPrPreset] = useState(null)
+      const [issuesSub, setIssuesSub] = useState(null)
       const [ov, setOv] = useState(null)
       const [rev, setRev] = useState('')
       const [cloneUrl, setCloneUrl] = useState('')
@@ -299,8 +300,8 @@ window.__ModuleLoader__.load({
         tab === 'files' && h(FileTree, { repo, rev: rev || 'master', t, overview: ov, onOverview: setOv }),
         tab === 'commits' && h(Commits, { repo, rev: rev || 'master', t }),
         tab === 'branches' && h(Branches, { repo, t, onNewPR: (head, base) => { setPrPreset({ head, base }); setTab('pulls') } }),
-        tab === 'issues' && h(IssuesArea, { repo, t }),
-        tab === 'pulls' && h(Pulls, { repo, t, preset: prPreset, onPresetDone: () => setPrPreset(null), onGoIssuesSub: (k) => { setTab('issues'); setTimeout(() => { const el = document.querySelectorAll('.dgs-subtab')[k === 'labels' ? 1 : 2]; el && el.click() }, 0) } }),
+        tab === 'issues' && h(IssuesArea, { repo, t, initialSub: issuesSub || undefined }),
+        tab === 'pulls' && h(Pulls, { repo, t, preset: prPreset, onPresetDone: () => setPrPreset(null), onGoIssuesSub: (k) => { setIssuesSub(k); setTab('issues') } }),
         tab === 'wiki' && h(WikiView, { repo, t }),
         tab === 'releases' && h(Releases, { repo, t }),
         tab === 'settings' && h(RepoSettings, { repo, t }),
@@ -481,8 +482,8 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function IssuesArea({ repo, t }) {
-      const [sub, setSub] = useState('list')
+    function IssuesArea({ repo, t, initialSub }) {
+      const [sub, setSub] = useState(initialSub || 'list')
       const [labelJump, setLabelJump] = useState(null)
       const [msJump, setMsJump] = useState(null)
       const subLink = (k, label) => h('a', { key: k, style: { cursor: 'pointer', marginRight: 18, fontSize: 13,
@@ -1001,18 +1002,6 @@ window.__ModuleLoader__.load({
       const header = h('div', { className: 'dgs-row', style: { margin: '8px 0 12px' } },
         h('span', { style: { fontWeight: 700 } }, list ? list.length + ' 个标签' : ''),
         h('span', { style: { flex: 1 } }),
-        h('button', { className: 'dgs-btn ghost', onClick: async () => {
-          const templates = [
-            { name: 'bug', color: '#e25444' }, { name: 'duplicate', color: '#b7b7b7' },
-            { name: 'enhancement', color: '#70c24a' }, { name: 'help wanted', color: '#c8c8ff' },
-            { name: 'invalid', color: '#fef2c0' }, { name: 'question', color: '#d876e3' },
-            { name: 'wontfix', color: '#ffffff' },
-          ]
-          for (const tpl of templates) {
-            await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/labels`, tpl)
-          }
-          reload()
-        } }, '加载标签模板'),
         h('button', { className: 'dgs-btn', onClick: startCreate }, '创建标签'))
       const formCard = (creating || editId !== null)
         ? h('div', { className: 'dgs-card', style: { marginBottom: 12 } },
@@ -1037,7 +1026,27 @@ window.__ModuleLoader__.load({
         msg ? h('div', { className: 'dgs-err' }, msg) : null,
         formCard,
         list === null ? h('div', { className: 'dgs-empty' }, t('loading'))
-          : list.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
+          : list.length === 0 ? h('div', { className: 'dgs-card', style: { maxWidth: 520, margin: '30px auto', textAlign: 'center' } },
+              h('div', { style: { fontWeight: 700, marginBottom: 8 } }, '加载预定义的标签模板'),
+              h('div', { className: 'dgs-sub', style: { marginBottom: 14 } }, '此仓库还未创建任何标签。可以通过上方的「创建标签」创建一个新的标签或加载一组预定义的标签。'),
+              h('div', { className: 'dgs-row', style: { justifyContent: 'center' } },
+                h('select', { className: 'dgs-input', style: { maxWidth: 240, flex: 'none' } },
+                  h('option', { value: 'default' }, 'Default'),
+                  h('option', { value: 'enterprise' }, 'Enterprise')),
+                h('button', { className: 'dgs-btn', onClick: async (e) => {
+                  const existing = new Set((list || []).map((l) => l.name.toLowerCase()))
+                  const defaults = [
+                    { name: 'bug', color: '#e25444' }, { name: 'duplicate', color: '#b7b7b7' },
+                    { name: 'enhancement', color: '#70c24a' }, { name: 'help wanted', color: '#c8c8ff' },
+                    { name: 'invalid', color: '#fef2c0' }, { name: 'question', color: '#d876e3' },
+                    { name: 'wontfix', color: '#ffffff' },
+                  ]
+                  for (const tpl of defaults) {
+                    if (existing.has(tpl.name.toLowerCase())) continue
+                    await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/labels`, tpl)
+                  }
+                  reload()
+                } }, '加载标签模板')))
           : rows)
     }
 
@@ -1102,7 +1111,8 @@ window.__ModuleLoader__.load({
             h('input', { className: 'dgs-input', placeholder: '里程碑标题', value: form.title, onChange: (e) => setForm({ ...form, title: e.target.value }) }),
             h('div', { className: 'dgs-row', style: { marginTop: 8 } },
               h('span', { className: 'dgs-sub', style: { minWidth: 60 } }, '截止日期'),
-              h('input', { type: 'date', className: 'dgs-input', style: { maxWidth: 180, flex: 'none' }, value: form.due, onChange: (e) => setForm({ ...form, due: e.target.value }) })),
+              h('input', { type: 'date', className: 'dgs-input', style: { maxWidth: 180, flex: 'none' }, value: form.due, onChange: (e) => setForm({ ...form, due: e.target.value }) }),
+              form.due ? h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => setForm({ ...form, due: '' }) }, '清除') : null),
             h('textarea', { className: 'dgs-input', style: { marginTop: 8, minHeight: 60 }, placeholder: '描述', value: form.description, onChange: (e) => setForm({ ...form, description: e.target.value }) }),
             h('div', { className: 'dgs-row', style: { marginTop: 8 } },
               h('button', { className: 'dgs-btn', disabled: busy || !form.title.trim(), onClick: saveForm }, editId !== null ? t('save') : t('submit')))))

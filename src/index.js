@@ -572,7 +572,12 @@ module.exports = {
               if (req.method === 'POST' && parts[0] === 'repos' && parts[3] === 'issues' && parts.length === 4) {
                 const [, owner, repo] = parts
                 const body = JSON.parse((await readBody(req)) || '{}')
-                const r = await kernelApi(cfg, actor, 'POST', `/repos/${owner}/${repo}/issues`, { title: String(body.title || ''), body: String(body.body || '') })
+                const r = await kernelApi(cfg, actor, 'POST', `/repos/${owner}/${repo}/issues`, {
+                  title: String(body.title || ''), body: String(body.body || ''),
+                  ...(Array.isArray(body.labels) ? { labels: body.labels } : {}),
+                  ...(body.milestone ? { milestone: body.milestone } : {}),
+                  ...(body.assignee ? { assignee: body.assignee } : {}),
+                })
                 sendJson(res, r.status === 201 ? 200 : r.status, r.status === 201 ? { ok: true } : { ok: false, error: errText(r) })
                 return
               }

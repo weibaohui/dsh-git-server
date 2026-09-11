@@ -2321,48 +2321,6 @@ export async function SettingsProtectedBranchPost(c: Context): Promise<void> {
 
 // ---------------------------------------------------------------- deploy keys
 
-export async function SettingsDeployKeys(c: Context): Promise<void> {
-  const repo = c.Repo.Repository!;
-  c.Data['PageIsSettings'] = true;
-  c.Data['PageIsSettingsKeys'] = true;
-  const rows = db.db().prepare('SELECT p.* FROM public_key p JOIN deploy_key d ON d.key_id = p.id WHERE d.repo_id = ?').all(repo.id) as any[];
-  c.Data['DeployKeys'] = rows.map((k: any) => db.goAlias({ ...k }));
-  c.Success('repo/settings/deploy_keys');
-}
-
-export async function SettingsDeployKeysPost(c: Context): Promise<void> {
-  const repo = c.Repo.Repository!;
-  const form = await c.form();
-  const title = String(form.title ?? '').trim();
-  const content = String(form.content ?? '').trim();
-  const { addPublicKey } = await import('./sshkey.js');
-  try {
-    // create as deploy key (type 2)
-    const clean = content.replaceAll('\n', '').replaceAll('\r', '');
-    const { fingerprintKey } = await import('./sshkey.js');
-    const fingerprint = fingerprintKey(clean);
-    const info = db.db()
-      .prepare('INSERT INTO public_key (owner_id, name, fingerprint, content, mode, type, created_unix, updated_unix) VALUES (?,?,?,?,2,2,?,?)')
-      .run(repo.owner_id, title, fingerprint, clean, nowUnix(), nowUnix());
-    const keyID = Number(info.lastInsertRowid);
-    db.db().prepare('INSERT INTO deploy_key (key_id, repo_id, name, fingerprint, created_unix, updated_unix) VALUES (?,?,?,?,?,?)')
-      .run(keyID, repo.id, title, fingerprint, nowUnix(), nowUnix());
-    c.flash.Success(c.Tr('repo.settings.add_deploy_key_success'));
-  } catch (e: any) {
-    void e;
-    c.flash.Error(c.Tr('repo.settings.add_deploy_key_failure'));
-  }
-  c.Redirect(repoLink(c) + '/settings/keys');
-}
-
-export async function DeleteDeployKey(c: Context): Promise<void> {
-  const form = await c.form();
-  const id = Number(form.id ?? 0);
-  db.db().prepare('DELETE FROM deploy_key WHERE key_id = ? AND repo_id = ?').run(id, c.Repo.Repository!.id);
-  db.db().prepare('DELETE FROM public_key WHERE id = ? AND type = 2').run(id);
-  c.Redirect(repoLink(c) + '/settings/keys');
-}
-
 // ---------------------------------------------------------------- webhooks
 
 export async function Webhooks(c: Context): Promise<void> {

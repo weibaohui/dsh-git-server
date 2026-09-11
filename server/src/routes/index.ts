@@ -4,17 +4,13 @@ import { ignSignIn, reqSignIn, reqAdmin, Context } from '../context.js';
 import { conf } from '../conf.js';
 import * as db from '../db/db.js';
 
-import * as install from './install.js';
 import * as home from './home.js';
 import * as user from './user.js';
 import * as repo from './repo.js';
 import * as org from './org.js';
 import * as admin from './admin.js';
-import * as adminAuths from './auths.js';
 
 export function registerWebRoutes(m: Router): void {
-  m.get('/install', install.Install);
-  m.post('/install', install.InstallPost);
   m.get('/', ignSignIn, home.Home);
   m.get('/explore', (c: Context) => c.Redirect(conf.subpath + '/explore/repos'));
   m.get('/explore/repos', ignSignIn, home.ExploreRepos);
@@ -36,15 +32,7 @@ export function registerWebRoutes(m: Router): void {
   m.post('/user/settings/email/delete', reqSignIn, settingsGuard, user.DeleteEmail);
   m.get('/user/settings/password', reqSignIn, settingsGuard, user.SettingsPassword);
   m.post('/user/settings/password', reqSignIn, settingsGuard, user.SettingsPasswordPost);
-  m.get('/user/settings/ssh', reqSignIn, settingsGuard, user.SettingsSSHKeys);
-  m.post('/user/settings/ssh', reqSignIn, settingsGuard, user.SettingsSSHKeysPost);
-  m.post('/user/settings/ssh/delete', reqSignIn, settingsGuard, user.DeleteSSHKey);
   m.get('/user/settings/security', reqSignIn, settingsGuard, user.SettingsSecurity);
-  m.get('/user/settings/security/two_factor_enable', reqSignIn, settingsGuard, user.SettingsTwoFactorEnable);
-  m.post('/user/settings/security/two_factor_enable', reqSignIn, settingsGuard, user.SettingsTwoFactorEnablePost);
-  m.get('/user/settings/security/two_factor_recovery_codes', reqSignIn, settingsGuard, user.SettingsTwoFactorRecoveryCodes);
-  m.post('/user/settings/security/two_factor_recovery_codes', reqSignIn, settingsGuard, user.SettingsTwoFactorRecoveryCodesPost);
-  m.post('/user/settings/security/two_factor_disable', reqSignIn, settingsGuard, user.SettingsTwoFactorDisable);
   m.get('/user/settings/repositories', reqSignIn, settingsGuard, user.SettingsRepos);
   m.post('/user/settings/repositories/leave', reqSignIn, settingsGuard, user.SettingsLeaveRepo);
   m.get('/user/settings/organizations', reqSignIn, settingsGuard, user.SettingsOrganizations);
@@ -78,12 +66,6 @@ export function registerWebRoutes(m: Router): void {
   m.get('/admin/orgs', reqAdmin, admin.Organizations);
   m.get('/admin/repos', reqAdmin, admin.Repos);
   m.post('/admin/repos/delete', reqAdmin, admin.DeleteRepo);
-  m.get('/admin/auths', reqAdmin, adminAuths.Authentications);
-  m.get('/admin/auths/new', reqAdmin, adminAuths.NewAuthSource);
-  m.post('/admin/auths/new', reqAdmin, adminAuths.NewAuthSourcePost);
-  m.get('/admin/auths/:authid', reqAdmin, adminAuths.EditAuthSource);
-  m.post('/admin/auths/:authid', reqAdmin, adminAuths.EditAuthSourcePost);
-  m.post('/admin/auths/:authid/delete', reqAdmin, adminAuths.DeleteAuthSource);
   m.get('/admin/notices', reqAdmin, admin.Notices);
   m.post('/admin/notices/delete', reqAdmin, admin.DeleteNotices);
   m.get('/admin/notices/empty', reqAdmin, admin.EmptyNotices);
@@ -173,9 +155,6 @@ export function registerWebRoutes(m: Router): void {
   m.post('/:username/:reponame/settings/hooks/dingtalk/:id', reqSignIn, repo.RepoAssignment(), repo.RequireRepoAdmin(), repo.WebhooksDingtalkEditPost);
   m.post('/:username/:reponame/settings/hooks/:id/test', reqSignIn, repo.RepoAssignment(), repo.RequireRepoAdmin(), repo.TestWebhook);
   m.post('/:username/:reponame/settings/hooks/:id/redelivery', reqSignIn, repo.RepoAssignment(), repo.RequireRepoAdmin(), repo.RedeliveryWebhook);
-  m.get('/:username/:reponame/settings/keys', reqSignIn, repo.RepoAssignment(), repo.RequireRepoAdmin(), repo.SettingsDeployKeys);
-  m.post('/:username/:reponame/settings/keys', reqSignIn, repo.RepoAssignment(), repo.RequireRepoAdmin(), repo.SettingsDeployKeysPost);
-  m.post('/:username/:reponame/settings/keys/delete', reqSignIn, repo.RepoAssignment(), repo.RequireRepoAdmin(), repo.DeleteDeployKey);
 
   // ----- Repo actions -----
   m.post('/:username/:reponame/action/:action', reqSignIn, repo.RepoAssignment(), repo.Action);

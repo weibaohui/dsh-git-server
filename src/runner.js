@@ -118,10 +118,13 @@ function writeAppIni(cfg) {
     secret = generateSecret()
     fs.writeFileSync(secretFile, secret + '\n', { mode: 0o600 })
   }
-  const sshDisabled = true // 插件默认不动系统 sshd / authorized_keys
+  // dsh 变体：git 只走 HTTP（SSH 服务与系统 authorized_keys 全部移除）
   const ini = [
     `RUN_USER = ${os.userInfo().username}`,
     'RUN_MODE = prod',
+    '',
+    '[app]',
+    'BRAND_NAME = dsh Git',
     '',
     '[auth]',
     'DISABLE_REGISTRATION = true',
@@ -130,9 +133,7 @@ function writeAppIni(cfg) {
     `HTTP_ADDR = ${cfg.host}`,
     `HTTP_PORT = ${cfg.port}`,
     `EXTERNAL_URL = http://${cfg.host === '0.0.0.0' || cfg.host === '::' ? '127.0.0.1' : cfg.host}:${cfg.port}${UI_SUBPATH}/`,
-    'DISABLE_SSH = ' + (sshDisabled ? 'true' : 'false'),
-    'START_SSH_SERVER = false',
-    'REWRITE_AUTHORIZED_KEYS_AT_START = false',
+    'DISABLE_SSH = true',
     'DISABLE_GRAVATAR = true',
     '',
     '[repository]',
@@ -173,7 +174,7 @@ function ensureDeps({ logger = () => {} } = {}) {
     const { createRequire } = require('node:module')
     probe = createRequire(path.join(SERVER_DIR, 'dist', 'index.js'))
   } catch {}
-  const critical = ['better-sqlite3', 'ssh2', 'marked', 'ini', 'busboy', 'qrcode']
+  const critical = ['better-sqlite3', 'marked', 'ini', 'busboy', 'qrcode']
   const missing = []
   for (const name of critical) {
     try { probe && probe.resolve(name) } catch { missing.push(name) }

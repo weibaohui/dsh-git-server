@@ -44,7 +44,7 @@ export class Conf {
     startSSHServer = false;
     rewriteAuthorizedKeysAtStart = false;
     // [app]
-    brandName = 'Gogs';
+    brandName = 'dsh Git';
     runUser = '';
     runMode = 'prod';
     version = '0.13.0+dev';
@@ -195,7 +195,7 @@ export class Conf {
             }
         }
         // 3. programmatic defaults & computed values
-        this.brandName = this.get('app', 'BRAND_NAME') ?? 'Gogs';
+        this.brandName = this.get('app', 'BRAND_NAME') ?? 'dsh Git';
         this.runUser = this.raw['DEFAULT']?.RUN_USER ?? this.get('server', 'RUN_USER') ?? process.env.USER ?? '';
         this.runMode = this.get('app', 'RUN_MODE') ?? 'prod';
         this.protocol = (this.get('server', 'PROTOCOL') ?? 'http').toLowerCase();

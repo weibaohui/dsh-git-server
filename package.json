@@ -57,8 +57,7 @@
     "busboy": "^1.6.0",
     "ini": "^5.0.0",
     "marked": "^15.0.0",
-    "qrcode": "^1.5.4",
-    "ssh2": "^1.17.0"
+    "qrcode": "^1.5.4"
   },
   "engines": {
     "node": ">=22.5"
@@ -69,7 +68,6 @@
     "@types/ini": "^4.1.1",
     "@types/node": "^22.10.0",
     "@types/qrcode": "^1.5.6",
-    "@types/ssh2": "^1.15.6",
     "typescript": "^5.7.0"
   }
 }

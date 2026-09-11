@@ -429,47 +429,9 @@ export async function SettingsPasswordPost(c) {
     c.flash.Success(c.Tr('settings.change_password_success'));
     c.Redirect(conf.subpath + '/user/settings/password');
 }
-export async function SettingsSSHKeys(c) {
-    await settingsBase(c, 'settings.ssh_keys');
-    c.Data['Keys'] = db.listPublicKeys(c.UserID()).map((k) => db.goAlias({ ...k }));
-    c.Success('user/settings/sshkeys');
-}
-export async function SettingsSSHKeysPost(c) {
-    await settingsBase(c, 'settings.ssh_keys');
-    const form = await c.form();
-    const name = String(form.title ?? '').trim();
-    const content = String(form.content ?? '').trim();
-    if (!name || !content) {
-        c.RenderWithErr(c.Tr('form.form_name_not_empty') /* closest */, 'user/settings/sshkeys');
-        return;
-    }
-    const { addPublicKey } = await import('./sshkey.js');
-    try {
-        await addPublicKey(c.UserID(), name, content);
-    }
-    catch (e) {
-        c.RenderWithErr(String(e.message ?? e), 'user/settings/sshkeys');
-        return;
-    }
-    c.flash.Success(c.Tr('settings.add_key_success', name));
-    c.Redirect(conf.subpath + '/user/settings/ssh');
-}
-export async function DeleteSSHKey(c) {
-    const form = await c.form();
-    const id = Number(form.id ?? 0);
-    const key = db.getPublicKeyByID(id);
-    if (key && key.owner_id === c.UserID()) {
-        db.db().prepare('DELETE FROM public_key WHERE id = ?').run(id);
-        const { writeAuthorizedKeys } = await import('./sshkey.js');
-        writeAuthorizedKeys();
-    }
-    c.Redirect(conf.subpath + '/user/settings/ssh');
-}
 export async function SettingsSecurity(c) {
-    await settingsBase(c, 'settings.security');
+    c.Data['Title'] = c.Tr('user.settings.security');
     c.Data['PageIsSettingsSecurity'] = true;
-    const twofactor = await import('../twofactor.js');
-    c.Data['TwoFactor'] = twofactor.getTwoFactorByUserID(c.UserID());
     c.Success('user/settings/security');
 }
 export async function SettingsRepos(c) {
@@ -625,74 +587,4 @@ export async function Email2User(c) {
     c.RedirectSubpath('/');
 }
 // ---------------------------------------------------------------- two-factor security
-export async function SettingsTwoFactorEnable(c) {
-    const twofactor = await import('../twofactor.js');
-    if (twofactor.isTwoFactorEnabled(c.UserID())) {
-        c.NotFound();
-        return;
-    }
-    c.Data['Title'] = c.Tr('settings.two_factor_enable_title');
-    c.Data['PageIsSettingsSecurity'] = true;
-    let secret = c.session.Get('twoFactorSecret');
-    let url = c.session.Get('twoFactorURL');
-    if (!secret || !url) {
-        const gen = twofactor.totpGenerate(conf.brandName, c.User.email);
-        secret = gen.secret;
-        url = gen.url;
-    }
-    c.Data['TwoFactorSecret'] = secret;
-    const QRCode = (await import('qrcode')).default;
-    c.Data['QRCode'] = await QRCode.toDataURL(url, { width: 240 });
-    c.session.Set('twoFactorSecret', secret);
-    c.session.Set('twoFactorURL', url);
-    c.session.Release();
-    c.Success('user/settings/two_factor_enable');
-}
-export async function SettingsTwoFactorEnablePost(c) {
-    const twofactor = await import('../twofactor.js');
-    const secret = c.session.Get('twoFactorSecret');
-    if (!secret) {
-        c.NotFound();
-        return;
-    }
-    const passcode = c.Query('passcode') || String((await c.form()).passcode ?? '');
-    if (!twofactor.totpValidate(passcode, String(secret))) {
-        c.flash.Error(c.Tr('settings.two_factor_invalid_passcode'));
-        c.RedirectSubpath('/user/settings/security/two_factor_enable');
-        return;
-    }
-    twofactor.createTwoFactor(c.UserID(), String(secret));
-    c.session.Delete('twoFactorSecret');
-    c.session.Delete('twoFactorURL');
-    c.session.Release();
-    c.flash.Success(c.Tr('settings.two_factor_enable_success'));
-    c.RedirectSubpath('/user/settings/security/two_factor_recovery_codes');
-}
-export async function SettingsTwoFactorRecoveryCodes(c) {
-    const twofactor = await import('../twofactor.js');
-    if (!twofactor.isTwoFactorEnabled(c.UserID())) {
-        c.NotFound();
-        return;
-    }
-    c.Data['Title'] = c.Tr('settings.two_factor_recovery_codes_title');
-    c.Data['PageIsSettingsSecurity'] = true;
-    c.Data['RecoveryCodes'] = twofactor.listRecoveryCodes(c.UserID());
-    c.Success('user/settings/two_factor_recovery_codes');
-}
-export async function SettingsTwoFactorRecoveryCodesPost(c) {
-    const twofactor = await import('../twofactor.js');
-    if (!twofactor.isTwoFactorEnabled(c.UserID())) {
-        c.NotFound();
-        return;
-    }
-    twofactor.regenerateRecoveryCodes(c.UserID());
-    c.flash.Success(c.Tr('settings.two_factor_regenerate_recovery_codes_success'));
-    c.RedirectSubpath('/user/settings/security/two_factor_recovery_codes');
-}
-export async function SettingsTwoFactorDisable(c) {
-    const twofactor = await import('../twofactor.js');
-    twofactor.deleteTwoFactor(c.UserID());
-    c.flash.Success(c.Tr('settings.two_factor_disable_success'));
-    c.RedirectSubpath('/user/settings/security');
-}
 //# sourceMappingURL=user.js.map

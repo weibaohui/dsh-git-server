@@ -402,21 +402,6 @@ export function registerAPIRoutes(m) {
             return;
         await fn(ctx);
     });
-    m.get('/api/v1/users/:username/keys', reqTokenWrap(async (ctx) => {
-        const u = db.getUserByUsername(ctx.c.Params(':username'));
-        if (!u) {
-            ctx.notFound();
-            return;
-        }
-        const keys = db.listPublicKeys(u.id);
-        ctx.c.JSONSuccess(keys.map((k) => ({
-            id: k.id,
-            key: k.content,
-            url: `${conf.externalURL}api/v1/user/keys/${k.id}`,
-            title: k.name,
-            created_at: new Date((k.created_unix ?? 0) * 1000).toISOString(),
-        })));
-    }));
     m.get('/api/v1/users/:username/followers', reqTokenWrap(async (ctx) => {
         const u = db.getUserByUsername(ctx.c.Params(':username'));
         if (!u) {
@@ -528,44 +513,6 @@ export function registerAPIRoutes(m) {
         const target = db.getUserByUsername(ctx.c.Params(':username'));
         if (target)
             db.unfollowUser(ctx.UserID(), target.id);
-        ctx.c.NoContent();
-    }));
-    m.get('/api/v1/user/keys', reqTokenWrap(async (ctx) => {
-        const keys = db.listPublicKeys(ctx.UserID());
-        ctx.c.JSONSuccess(keys.map((k) => ({
-            id: k.id,
-            key: k.content,
-            url: `${conf.externalURL}api/v1/user/keys/${k.id}`,
-            title: k.name,
-            created_at: new Date((k.created_unix ?? 0) * 1000).toISOString(),
-        })));
-    }));
-    m.post('/api/v1/user/keys', reqTokenWrap(async (ctx) => {
-        await createPublicKeyHandler(ctx, ctx.UserID());
-    }));
-    m.get('/api/v1/user/keys/:id', reqTokenWrap(async (ctx) => {
-        const key = db.getPublicKeyByID(ctx.c.ParamsInt64(':id'));
-        if (!key || key.owner_id !== ctx.UserID()) {
-            ctx.notFound();
-            return;
-        }
-        ctx.c.JSONSuccess({
-            id: key.id,
-            key: key.content,
-            url: `${conf.externalURL}api/v1/user/keys/${key.id}`,
-            title: key.name,
-            created_at: new Date((key.created_unix ?? 0) * 1000).toISOString(),
-        });
-    }));
-    m.delete('/api/v1/user/keys/:id', reqTokenWrap(async (ctx) => {
-        const key = db.getPublicKeyByID(ctx.c.ParamsInt64(':id'));
-        if (!key || key.owner_id !== ctx.UserID()) {
-            ctx.c.JSON(403, { message: 'You do not have access to this key.', url: DOCS_URL });
-            return;
-        }
-        db.db().prepare('DELETE FROM public_key WHERE id = ?').run(key.id);
-        const { writeAuthorizedKeys } = await import('../routes/sshkey.js');
-        writeAuthorizedKeys();
         ctx.c.NoContent();
     }));
     m.get('/api/v1/user/issues', reqTokenWrap(async (ctx) => listUserIssues(ctx)));
@@ -796,39 +743,6 @@ async function createRepoHandler(ctx, owner) {
     });
     ctx.c.JSON(201, toRepository(repo, { admin: true, push: true, pull: true }));
 }
-async function createPublicKeyHandler(ctx, ownerID) {
-    const body = (await ctx.c.form());
-    const title = String(body.title ?? '').trim();
-    const key = String(body.key ?? '').trim();
-    if (!title || !key) {
-        ctx.c.JSON(422, [{ fieldNames: [!title ? 'title' : 'key'], classification: 'RequiredError', message: 'Required' }]);
-        return;
-    }
-    const { fingerprintKey } = await import('../routes/sshkey.js');
-    const clean = key.replaceAll('\n', '').replaceAll('\r', '');
-    const fingerprint = fingerprintKey(clean);
-    if (db.db().prepare('SELECT 1 FROM public_key WHERE fingerprint = ?').get(fingerprint)) {
-        ctx.errorStatus(422, 'Key content has been used as non-deploy key');
-        return;
-    }
-    if (db.db().prepare('SELECT 1 FROM public_key WHERE owner_id = ? AND name = ?').get(ownerID, title)) {
-        ctx.errorStatus(422, 'Key title has been used');
-        return;
-    }
-    const now = Math.floor(Date.now() / 1000);
-    const info = db.db()
-        .prepare('INSERT INTO public_key (owner_id, name, fingerprint, content, mode, type, created_unix, updated_unix) VALUES (?,?,?,?,2,1,?,?)')
-        .run(ownerID, title, fingerprint, clean, now, now);
-    const { writeAuthorizedKeys } = await import('../routes/sshkey.js');
-    writeAuthorizedKeys();
-    ctx.c.JSON(201, {
-        id: Number(info.lastInsertRowid),
-        key: clean,
-        url: `${conf.externalURL}api/v1/user/keys/${Number(info.lastInsertRowid)}`,
-        title,
-        created_at: new Date(now * 1000).toISOString(),
-    });
-}
 function adminWrapRegister(m, adminWrap, createRepoHandler) {
     m.post('/api/v1/admin/users', adminWrap(async (ctx) => {
         const body = (await ctx.c.form());
@@ -894,14 +808,6 @@ function adminWrapRegister(m, adminWrap, createRepoHandler) {
             db.db().prepare(sql).run(u.id);
         }
         ctx.c.NoContent();
-    }));
-    m.post('/api/v1/admin/users/:username/keys', adminWrap(async (ctx) => {
-        const u = db.getUserByUsername(ctx.c.Params(':username'));
-        if (!u) {
-            ctx.notFound();
-            return;
-        }
-        await createPublicKeyHandler(ctx, u.id);
     }));
     m.post('/api/v1/admin/users/:username/orgs', adminWrap(async (ctx) => {
         const u = db.getUserByUsername(ctx.c.Params(':username'));
@@ -1411,73 +1317,6 @@ function registerRepoSubRoutes(m, _wrap, reqTokenWrap, repoGroup, repoGroupNoTok
         await getReferenceSHAHandler(ctx, ctx.c.Params(':*'));
     }));
     // deploy keys
-    m.get('/api/v1/repos/:username/:reponame/keys', repoAdminGroup(repoGroup, async (ctx) => {
-        const rows = db.db().prepare('SELECT p.* FROM public_key p JOIN deploy_key d ON d.key_id = p.id WHERE d.repo_id = ?').all(ctx.repo.Repository.id);
-        ctx.c.JSONSuccess(rows.map((k) => ({
-            id: k.id,
-            key: k.content,
-            url: `${conf.externalURL}api/v1/repos/${ctx.repo.Repository.FullName()}/keys/${k.id}`,
-            title: k.name,
-            created_at: new Date((k.created_unix ?? 0) * 1000).toISOString(),
-            read_only: true,
-        })));
-    }));
-    m.post('/api/v1/repos/:username/:reponame/keys', repoAdminGroup(repoGroup, async (ctx) => {
-        const body = (await ctx.c.form());
-        const title = String(body.title ?? '').trim();
-        const key = String(body.key ?? '').trim();
-        if (!title || !key) {
-            ctx.c.JSON(422, [{ fieldNames: [!title ? 'title' : 'key'], classification: 'RequiredError', message: 'Required' }]);
-            return;
-        }
-        const { fingerprintKey } = await import('../routes/sshkey.js');
-        const clean = key.replaceAll('\n', '').replaceAll('\r', '');
-        const fingerprint = fingerprintKey(clean);
-        if (db.db().prepare('SELECT 1 FROM public_key WHERE fingerprint = ?').get(fingerprint)) {
-            ctx.errorStatus(422, 'Key content has been used as non-deploy key');
-            return;
-        }
-        const now = Math.floor(Date.now() / 1000);
-        const info = db.db()
-            .prepare('INSERT INTO public_key (owner_id, name, fingerprint, content, mode, type, created_unix, updated_unix) VALUES (?,?,?,?,2,2,?,?)')
-            .run(ctx.repo.Repository.owner_id, title, fingerprint, clean, now, now);
-        const keyID = Number(info.lastInsertRowid);
-        db.db().prepare('INSERT INTO deploy_key (key_id, repo_id, name, fingerprint, created_unix, updated_unix) VALUES (?,?,?,?,?,?)')
-            .run(keyID, ctx.repo.Repository.id, title, fingerprint, now, now);
-        ctx.c.JSON(201, {
-            id: keyID,
-            key: clean,
-            url: `${conf.externalURL}api/v1/repos/${ctx.repo.Repository.FullName()}/keys/${keyID}`,
-            title,
-            created_at: new Date(now * 1000).toISOString(),
-            read_only: true,
-        });
-    }));
-    m.get('/api/v1/repos/:username/:reponame/keys/:id', repoAdminGroup(repoGroup, async (ctx) => {
-        const row = db.db().prepare('SELECT p.* FROM public_key p JOIN deploy_key d ON d.key_id = p.id WHERE d.repo_id = ? AND p.id = ?').get(ctx.repo.Repository.id, ctx.c.ParamsInt64(':id'));
-        if (!row) {
-            ctx.notFound();
-            return;
-        }
-        ctx.c.JSONSuccess({
-            id: row.id,
-            key: row.content,
-            url: `${conf.externalURL}api/v1/repos/${ctx.repo.Repository.FullName()}/keys/${row.id}`,
-            title: row.name,
-            created_at: new Date((row.created_unix ?? 0) * 1000).toISOString(),
-            read_only: true,
-        });
-    }));
-    m.delete('/api/v1/repos/:username/:reponame/keys/:id', repoAdminGroup(repoGroup, async (ctx) => {
-        const row = db.db().prepare('SELECT p.* FROM public_key p JOIN deploy_key d ON d.key_id = p.id WHERE d.repo_id = ? AND p.id = ?').get(ctx.repo.Repository.id, ctx.c.ParamsInt64(':id'));
-        if (!row) {
-            ctx.notFound();
-            return;
-        }
-        db.db().prepare('DELETE FROM deploy_key WHERE key_id = ?').run(row.id);
-        db.db().prepare('DELETE FROM public_key WHERE id = ?').run(row.id);
-        ctx.c.NoContent();
-    }));
     // issues
     const issuesGroup = (fn) => reqTokenWrap(async (ctx) => {
         const ok = await repoAssignment(ctx, ctx.c.Params(':username'), ctx.c.Params(':reponame'));

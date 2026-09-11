@@ -22,15 +22,10 @@ async function main() {
         conf.buildCommit = execSync('git rev-parse --short HEAD', { cwd: workDir }).toString().trim();
     }
     catch { }
-    // git delegate hook / ssh serv entrypoints (config must be loaded before dispatch)
+    // git delegate hook entrypoints (config must be loaded before dispatch)
     if (argv[0] === 'hook') {
         const { runHook } = await import('./hook.js');
         await runHook(argv[1] ?? '');
-        return;
-    }
-    if (argv[0] === 'serv') {
-        const { runServ } = await import('./serv.js');
-        await runServ(argv[1] ?? '');
         return;
     }
     console.log(`${conf.brandName} ${conf.version} (ts-gogs)`);
@@ -97,11 +92,7 @@ async function main() {
     // periodic mirror synchronization (gogs InitSyncMirrors)
     const { startMirrorLoop } = await import('./mirror.js');
     startMirrorLoop();
-    // builtin SSH server (gogs START_SSH_SERVER)
-    if (conf.startSSHServer) {
-        const { startSSHServer } = await import('./sshx/server.js');
-        startSSHServer();
-    }
+    // dsh-git-server 变体：不启动内置 SSH 服务（git 统一走 HTTP）
     // dsh-git-server 变体减法：不写系统 ~/.ssh/authorized_keys（插件默认
     // DISABLE_SSH，git 统一走 HTTP），避免与宿主机器的 ssh 配置互相干扰。
     console.log(`Available on    ${conf.externalURL}`);

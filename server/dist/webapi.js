@@ -135,13 +135,6 @@ export async function handleWebAPI(c, subPath) {
                 c.JSON(401, errBody(c.Tr('form.username_password_incorrect'), { username: null, password: null }));
                 return true;
             }
-            const twofactor = await import('./twofactor.js');
-            if (twofactor.isTwoFactorEnabled(user.id)) {
-                c.session.Set('mfaUserID', user.id);
-                c.session.Release();
-                c.JSONSuccess({ mfa: true });
-                return true;
-            }
             completeSignIn(c, user);
             c.JSONSuccess({});
             return true;
@@ -172,81 +165,6 @@ export async function handleWebAPI(c, subPath) {
             return true;
         }
         completeSignIn(c, shadow);
-        c.JSONSuccess({});
-        return true;
-    }
-    if (subPath === '/user/mfa') {
-        if (method === 'GET') {
-            const uid = c.session.Get('mfaUserID');
-            if (!uid) {
-                c.Status(404);
-                c.res.end();
-                c.rendered = true;
-                return true;
-            }
-            c.Status(204);
-            c.res.end();
-            c.rendered = true;
-            return true;
-        }
-        if (method === 'POST') {
-            const uid = c.session.Get('mfaUserID');
-            if (!uid) {
-                c.JSON(401, errBody(c.Tr('auth.mfa_session_expired')));
-                return true;
-            }
-            const req = await c.form();
-            const passcode = String(req.passcode ?? '');
-            const twofactor = await import('./twofactor.js');
-            if (!/^[0-9]{6}$/.test(passcode)) {
-                const msg = c.Tr('auth.mfa_invalid_passcode');
-                c.JSON(401, errBody(undefined, { passcode: msg }));
-                return true;
-            }
-            if (!twofactor.validateTOTP(uid, passcode)) {
-                const msg = c.Tr('auth.mfa_invalid_passcode');
-                c.JSON(401, errBody(undefined, { passcode: msg }));
-                return true;
-            }
-            if (twofactor.passcodeRecentlyUsed(uid, passcode)) {
-                const msg = c.Tr('auth.mfa_reused_passcode');
-                c.JSON(401, errBody(undefined, { passcode: msg }));
-                return true;
-            }
-            twofactor.markPasscodeUsed(uid, passcode);
-            const u = db.getUserByID(uid);
-            if (!u) {
-                c.Status(500);
-                c.res.end();
-                c.rendered = true;
-                return true;
-            }
-            completeSignIn(c, u);
-            c.JSONSuccess({});
-            return true;
-        }
-    }
-    if (subPath === '/user/mfa/recovery' && method === 'POST') {
-        const uid = c.session.Get('mfaUserID');
-        if (!uid) {
-            c.JSON(401, errBody(c.Tr('auth.mfa_session_expired')));
-            return true;
-        }
-        const req = await c.form();
-        const twofactor = await import('./twofactor.js');
-        if (!twofactor.useRecoveryCode(uid, String(req.recoveryCode ?? ''))) {
-            const msg = c.Tr('auth.mfa_invalid_recovery_code');
-            c.JSON(401, errBody(undefined, { recoveryCode: msg }));
-            return true;
-        }
-        const u = db.getUserByID(uid);
-        if (!u) {
-            c.Status(500);
-            c.res.end();
-            c.rendered = true;
-            return true;
-        }
-        completeSignIn(c, u);
         c.JSONSuccess({});
         return true;
     }

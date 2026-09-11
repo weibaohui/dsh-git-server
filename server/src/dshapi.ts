@@ -83,6 +83,19 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     });
   });
 
+  // ── git 标签列表（名称/指向/日期/说明） ──────────────────────
+  m.get('/api/dsh/repos/:o/:r/tags', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const dir = ar.repo.RepoPath();
+    const out = (await git.git(dir, 'for-each-ref', '--sort=-creatordate',
+      '--format=%(refname:short)%01%(objectname:short)%01%(creatordate:unix)%01%(contents:subject)', 'refs/tags/'))?.toString('utf8') ?? '';
+    const rows = out.split('\n').filter(Boolean).map((l) => {
+      const [name, sha, date, msg] = l.split('\x01');
+      return { name, sha: sha || '', date: Number(date) * 1000 || 0, msg: msg || '' };
+    });
+    c.JSONSuccess(rows);
+  });
+
   // ── 文件列表（带每项最近提交） ────────────────────────────────
   m.get('/api/dsh/repos/:o/:r/tree', async (c: Context) => {
     const ar = authRepo(c); if (!ar) return;
@@ -209,13 +222,16 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
       where.push('i.assignee_id = ?'); args.push(au ? au.id : -1);
     }
     if (labelF) { where.push('i.id IN (SELECT issue_id FROM issue_label WHERE label_id = ?)'); args.push(labelF); }
+    const search = c.Query('search').trim().toLowerCase();
+    if (search) { where.push('(lower(i.name) LIKE ? OR lower(i.content) LIKE ?)'); args.push('%' + search + '%', '%' + search + '%'); }
+    const sortKey = ({ latest: 'i.created_unix DESC', oldest: 'i.created_unix ASC', recentupdate: 'i.updated_unix DESC', leastupdate: 'i.updated_unix ASC', mostcomment: 'i.num_comments DESC', leastcomment: 'i.num_comments ASC' } as Record<string, string>)[c.Query('sort') || 'latest'] || 'i.updated_unix DESC';
     const rows = db.db().prepare(
       `SELECT i.id, i."index" AS number, i.name AS title, i.is_closed, i.num_comments AS comments, i.updated_unix AS updated,
               u.name AS user, ms.id AS msId, ms.name AS msTitle, au.name AS assignee
        FROM issue i LEFT JOIN user u ON u.id = i.poster_id
        LEFT JOIN milestone ms ON ms.id = i.milestone_id
        LEFT JOIN user au ON au.id = i.assignee_id
-       WHERE ${where.join(' AND ')} ORDER BY i.updated_unix DESC LIMIT 200`
+       WHERE ${where.join(' AND ')} ORDER BY ${sortKey} LIMIT 200`
     ).all(...args) as any[];
     const labelMap: Record<number, any[]> = {};
     if (rows.length) {
@@ -381,6 +397,97 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
       }
     }
     db.refreshIssueCounts(ar.repo.id);
+    c.JSONSuccess({ ok: true });
+  });
+
+  // ── 关注 / 星标（toggle + 列表，对齐原版 action/watch|star） ──
+  const starWatch = (table: string, countCol: string) => {
+    const ucol = table === 'star' ? 'uid' : 'user_id';
+    return ({
+      get: async (c: Context) => {
+        const ar = authRepo(c); if (!ar) return;
+        const on = !!db.db().prepare(`SELECT 1 FROM ${table} WHERE ${ucol} = ? AND repo_id = ?`).get(ar.user.id, ar.repo.id);
+        const users = db.db().prepare(`SELECT u.name FROM ${table} x JOIN user u ON u.id = x.${ucol} WHERE x.repo_id = ? ORDER BY x.id DESC LIMIT 50`).all(ar.repo.id).map((r: any) => r.name);
+        c.JSONSuccess({ on, count: Number(ar.repo[countCol] || 0), users });
+      },
+      post: async (c: Context) => {
+        const ar = authRepo(c); if (!ar) return;
+        const on = !!db.db().prepare(`SELECT 1 FROM ${table} WHERE ${ucol} = ? AND repo_id = ?`).get(ar.user.id, ar.repo.id);
+        if (on) db.db().prepare(`DELETE FROM ${table} WHERE ${ucol} = ? AND repo_id = ?`).run(ar.user.id, ar.repo.id);
+        else db.db().prepare(`INSERT INTO ${table} (${ucol}, repo_id) VALUES (?,?)`).run(ar.user.id, ar.repo.id);
+        const n = (db.db().prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE repo_id = ?`).get(ar.repo.id) as any).c;
+        db.db().prepare(`UPDATE repository SET ${countCol} = ? WHERE id = ?`).run(n, ar.repo.id);
+        c.JSONSuccess({ on: !on, count: n });
+      },
+    });
+  };
+  const star = starWatch('star', 'num_stars');
+  const watch = starWatch('watch', 'num_watches');
+  m.get('/api/dsh/repos/:o/:r/star', (c: Context) => star.get(c));
+  m.post('/api/dsh/repos/:o/:r/star', (c: Context) => star.post(c));
+  m.get('/api/dsh/repos/:o/:r/watch', (c: Context) => watch.get(c));
+  m.post('/api/dsh/repos/:o/:r/watch', (c: Context) => watch.post(c));
+
+  // ── fork ────────────────────────────────────────────────────────
+  m.post('/api/dsh/repos/:o/:r/fork', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const src = ar.repo;
+    const body = await c.form();
+    const orgName = String(body.org ?? '');
+    const owner = orgName ? db.getUserByUsername(orgName) : ar.user;
+    if (!owner) { c.JSON(404, { error: 'org not found' }); return; }
+    if (orgName) {
+      const mem = db.db().prepare('SELECT 1 FROM org_user WHERE org_id = ? AND uid = ? AND is_owner = 1').get(owner.id, ar.user.id);
+      if (!mem && ar.user.is_admin !== 1) { c.JSON(403, { error: '需要组织管理员' }); return; }
+    }
+    if (db.getRepoByOwnerAndName(owner, src.name)) { c.JSON(422, { error: '同名仓库已存在' }); return; }
+    const now = Math.floor(Date.now() / 1000);
+    const info = db.db().prepare(
+      'INSERT INTO repository (owner_id, lower_name, name, description, is_private, is_fork, fork_id, num_watches, num_stars, num_forks, num_issues, num_closed_issues, num_pulls, num_closed_pulls, created_unix) VALUES (?,?,?,?,?,?,?,?,?,?,0,0,0,0,?)'
+    ).run(owner.id, src.lower_name, src.name, src.description, src.is_private, 1, src.id, 1, 0, 0, now);
+    const fork = db.getRepoByID(Number(info.lastInsertRowid));
+    if (!fork) { c.JSON(500, { error: 'fork insert failed' }); return; }
+    try {
+      await svc.forkRepository(src, fork);
+      db.db().prepare('UPDATE repository SET num_forks = num_forks + 1 WHERE id = ?').run(src.id);
+      const { forkRepoAction } = await import('./db/actions.js');
+      await forkRepoAction(ar.user, fork);
+      c.JSONSuccess({ ok: true, owner: owner.name, name: fork.name });
+    } catch (e: any) {
+      db.db().prepare('DELETE FROM repository WHERE id = ?').run(fork.id);
+      c.JSON(500, { error: 'fork failed: ' + String(e?.message ?? e).slice(0, 160) });
+    }
+  });
+
+  // ── webhook CRUD ────────────────────────────────────────────────
+  m.get('/api/dsh/repos/:o/:r/hooks', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const rows = db.db().prepare('SELECT id, url, content_type, is_active, events, created_unix FROM webhook WHERE repo_id = ? ORDER BY id').all(ar.repo.id);
+    c.JSONSuccess(rows);
+  });
+  m.post('/api/dsh/repos/:o/:r/hooks', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const body = await c.form();
+    const url = String(body.url ?? '').trim();
+    if (!url.startsWith('http')) { c.JSON(422, { error: 'url required' }); return; }
+    const events = JSON.stringify(body.events || { push: true });
+    const info = db.db().prepare('INSERT INTO webhook (repo_id, url, content_type, is_active, events, created_unix, updated_unix) VALUES (?,?,1,1,?,?,?)')
+      .run(ar.repo.id, url, events, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000));
+    c.JSONSuccess({ id: Number(info.lastInsertRowid), url });
+  });
+  m.patch('/api/dsh/repos/:o/:r/hooks/:id', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const body = await c.form();
+    const sets: string[] = []; const args: any[] = [];
+    if (body.url !== undefined) { sets.push('url = ?'); args.push(String(body.url)); }
+    if (body.active !== undefined) { sets.push('is_active = ?'); args.push(body.active ? 1 : 0); }
+    if (sets.length) db.db().prepare(`UPDATE webhook SET ${sets.join(', ')}, updated_unix = ? WHERE id = ? AND repo_id = ?`)
+      .run(...args, Math.floor(Date.now() / 1000), c.ParamsInt64(':id'), ar.repo.id);
+    c.JSONSuccess({ ok: true });
+  });
+  m.delete('/api/dsh/repos/:o/:r/hooks/:id', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    db.db().prepare('DELETE FROM webhook WHERE id = ? AND repo_id = ?').run(c.ParamsInt64(':id'), ar.repo.id);
     c.JSONSuccess({ ok: true });
   });
 
@@ -559,9 +666,18 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
       await git.git(process.cwd(), 'clone', '-b', pr.base_branch, baseDir, tmpDir);
       await git.git(tmpDir, 'remote', 'add', 'head_repo', headRepo.RepoPath());
       await git.git(tmpDir, 'fetch', 'head_repo');
-      await git.git(tmpDir, 'merge', '--no-ff', '--no-commit', '--end-of-options', `head_repo/${pr.head_branch}`);
-      const msg = `Merge branch '${pr.head_branch}' of ${pr.head_user_name}/${headRepo.name} into ${pr.base_branch}`;
-      await git.git(tmpDir, 'commit', `--author=${user.name} <${user.email}>`, '-m', msg);
+      const style = (await c.form()).style || 'merge';
+      if (style === 'rebase') {
+        await git.git(tmpDir, 'rebase', '--end-of-options', `head_repo/${pr.head_branch}`);
+      } else if (style === 'squash') {
+        await git.git(tmpDir, 'merge', '--squash', '--end-of-options', `head_repo/${pr.head_branch}`);
+        const msg = `${pr.title} (#${issue.index})\n\n${issue.content || ''}`;
+        await git.git(tmpDir, 'commit', `--author=${user.name} <${user.email}>`, '-m', msg);
+      } else {
+        await git.git(tmpDir, 'merge', '--no-ff', '--no-commit', '--end-of-options', `head_repo/${pr.head_branch}`);
+        const msg = `Merge branch '${pr.head_branch}' of ${pr.head_user_name}/${headRepo.name} into ${pr.base_branch}`;
+        await git.git(tmpDir, 'commit', `--author=${user.name} <${user.email}>`, '-m', msg);
+      }
       await git.git(tmpDir, 'push', 'origin', `HEAD:refs/heads/${pr.base_branch}`);
       const now = Math.floor(Date.now() / 1000);
       db.db().prepare('UPDATE pull_request SET has_merged = 1, merger_id = ?, merged_unix = ? WHERE id = ?').run(user.id, now, pr.id);
@@ -576,6 +692,16 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  // ── PR 不合并关闭 ─────────────────────────────────────────────
+  m.post('/api/dsh/repos/:o/:r/pulls/:index/close', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const issue = db.getIssueByIndex(ar.repo.id, c.ParamsInt64(':index'));
+    if (!issue || !issue.is_pull) { c.JSON(404, { error: 'pull not found' }); return; }
+    db.updateIssueColumns(issue.id, { is_closed: 1 });
+    db.refreshIssueCounts(ar.repo.id);
+    c.JSONSuccess({ ok: true });
   });
 
   // ── wiki：列表 / 读取 / 保存 ──────────────────────────────────
@@ -624,6 +750,28 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     c.JSONSuccess({ name, content, html });
   });
 
+  m.get('/api/dsh/repos/:o/:r/wiki/:page/commits', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const dir = wikiDirOf(ar.repo);
+    if (!fs.existsSync(dir)) { c.JSONSuccess([]); return; }
+    const pageName = c.Params(':page');
+    const file = pageName.endsWith('.md') ? pageName : pageName + '.md';
+    const out = (await git.git(dir, 'log', '--pretty=format:%H%x1f%s%x1f%an%x1f%ai', '--', file))?.toString('utf8') ?? '';
+    const rows = out.split('\n').filter(Boolean).map((l) => { const [sha, message, author, date] = l.split('\x1f'); return { sha, message, author, date }; });
+    c.JSONSuccess(rows);
+  });
+  m.delete('/api/dsh/repos/:o/:r/wiki/:page', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const dir = wikiDirOf(ar.repo);
+    if (!fs.existsSync(dir)) { c.JSON(404, { error: 'no wiki' }); return; }
+    const pageName = c.Params(':page');
+    const file = pageName.endsWith('.md') ? pageName : pageName + '.md';
+    try {
+      await git.git(dir, 'rm', '-q', '--', file);
+      await git.git(dir, 'commit', '-q', '-m', `Delete ${pageName}`);
+      c.JSONSuccess({ ok: true });
+    } catch (e: any) { c.JSON(500, { error: String(e?.message ?? e).slice(0, 120) }); }
+  });
   m.post('/api/dsh/repos/:o/:r/wiki/:page', async (c: Context) => {
     const ar = authRepo(c, true);
     if (!ar) return;
@@ -645,10 +793,10 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     const ar = authRepo(c);
     if (!ar) return;
     const rows = db.db().prepare(
-      'SELECT r.id, r.tag_name, r.title, r.note, r.created_unix, u.name AS author FROM `release` r LEFT JOIN user u ON u.id = r.publisher_id WHERE r.repo_id = ? ORDER BY r.created_unix DESC'
+      'SELECT r.id, r.tag_name, r.title, r.note, r.is_draft, r.is_prerelease, r.created_unix, u.name AS author FROM `release` r LEFT JOIN user u ON u.id = r.publisher_id WHERE r.repo_id = ? ORDER BY r.created_unix DESC'
     ).all(ar.repo.id) as any[];
     c.JSONSuccess(rows.map((r) => ({
-      id: r.id, tag: r.tag_name, title: r.title,
+      id: r.id, tag: r.tag_name, title: r.title, draft: !!r.is_draft, prerelease: !!r.is_prerelease,
       noteHtml: r.note ? sanitizeHTML(markdown(r.note, conf.subpath + '/', {})) : '',
       noteRaw: r.note || '',
       author: r.author, createdAt: r.created_unix,
@@ -691,9 +839,9 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
       const numCommits = await git.commitsCount(repoDir, sha);
       const now = Math.floor(Date.now() / 1000);
       db.db().prepare(
-        'INSERT INTO `release` (repo_id, publisher_id, tag_name, lower_tag_name, title, note, is_draft, is_prerelease, created_unix) VALUES (?,?,?,?,?,?,0,0,?)'
-      ).run(repo.id, user.id, tag, tag.toLowerCase(), title, note, now);
-      void numCommits; // 统计口径与内核同步，无需回写（列名随 schema 变动）
+        'INSERT INTO `release` (repo_id, publisher_id, tag_name, lower_tag_name, target, title, sha1, num_commits, note, is_draft, is_prerelease, created_unix) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)'
+      ).run(repo.id, user.id, tag, tag.toLowerCase(), target, title, sha, numCommits, note,
+        body.draft ? 1 : 0, body.prerelease ? 1 : 0, now);
       c.JSONSuccess({ ok: true });
     } catch (e: any) {
       c.JSON(500, { error: String(e?.message ?? e).slice(0, 200) });

@@ -94,6 +94,9 @@ function ensureStyles() {
 .dgs-badge.pri{color:#f59e0b;border-color:#f59e0b55}
 .dgs-badge.ok{color:var(--dsw-alias-state-success-primary);border-color:var(--dsw-alias-state-success-primary)44}
 .dgs-badge.closed{color:var(--dsw-alias-label-tertiary)}
+.dgs-labeled{display:inline-flex;align-items:stretch;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;overflow:hidden}
+.dgs-labeled .dgs-btn{border:none;border-radius:0}
+.dgs-labeled-count{display:inline-flex;align-items:center;padding:0 10px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary);border-left:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2)}
 .dgs-sub{font-size:12px;color:var(--dsw-alias-label-tertiary)}
 .dgs-btn{cursor:pointer;border:none;border-radius:8px;padding:6px 14px;font-size:13px;font-weight:500;background:var(--dsw-alias-state-business-primary);color:#fff}
 .dgs-btn:hover{filter:brightness(1.1)}
@@ -180,10 +183,15 @@ const nav = (hash) => { location.hash = hash }
 
 function RepoBrowser({ repo, t, onBack }) {
   const [tab, setTab] = useState('files')
+  const [prPreset, setPrPreset] = useState(null)
   const [ov, setOv] = useState(null)
   const [rev, setRev] = useState('')
   const [cloneUrl, setCloneUrl] = useState('')
   const [copied, setCopied] = useState(false)
+  const [star, setStar] = useState(null)
+  const [watch, setWatch] = useState(null)
+  const [forkBusy, setForkBusy] = useState(false)
+  const [msg, setMsg] = useState('')
   useEffect(() => {
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/overview`).then((d) => {
       if (!d.defaultBranch) return
@@ -193,7 +201,20 @@ function RepoBrowser({ repo, t, onBack }) {
     fetch(API + '/status').then((r) => r.json()).then((st) => {
       if (st && st.running) setCloneUrl('git clone http://' + location.hostname + ':' + (st.port || 3400) + '/' + repo.owner + '/' + repo.name + '.git')
     }).catch(() => {})
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/star`).then((d) => d.count !== undefined && setStar(d))
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/watch`).then((d) => d.count !== undefined && setWatch(d))
   }, [repo.owner, repo.name])
+  const toggle = async (kind) => {
+    const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/${kind}`)
+    if (d.on !== undefined) (kind === 'star' ? setStar : setWatch)({ on: d.on, count: d.count })
+  }
+  const fork = async () => {
+    setForkBusy(true); setMsg('')
+    const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/fork`)
+    setForkBusy(false)
+    if (d.ok) nav('/r/' + d.owner + '/' + d.name)
+    else setMsg(d.error || 'fork failed')
+  }
   const branchSel = ov && ov.branches && ov.branches.length
     ? h('select', {
         className: 'dgs-input', style: { flex: 'none', width: 'auto', padding: '4px 8px' },
@@ -205,17 +226,24 @@ function RepoBrowser({ repo, t, onBack }) {
       h('button', { className: 'dgs-btn ghost', onClick: onBack }, t('back')),
       h('span', { className: 'dgs-h1' }, repo.owner + '/' + repo.name),
       repo.private || (ov && ov.private) ? h('span', { className: 'dgs-badge pri' }, t('private')) : null,
+      h('span', { style: { flex: 1 } }),
+      star ? h('span', { className: 'dgs-labeled' },
+        h('button', { className: 'dgs-btn ghost', onClick: () => toggle('star') }, star.on ? '★ Unstar' : '☆ Star'),
+        h('span', { className: 'dgs-labeled-count' }, star.count)) : null,
+      watch ? h('span', { className: 'dgs-labeled' },
+        h('button', { className: 'dgs-btn ghost', onClick: () => toggle('watch') }, watch.on ? '👁 Unwatch' : '👁 Watch'),
+        h('span', { className: 'dgs-labeled-count' }, watch.count)) : null,
+      h('button', { className: 'dgs-btn ghost', disabled: forkBusy, onClick: fork }, '⑂ Fork'),
       branchSel,
     ),
+    msg ? h('div', { className: 'dgs-err' }, msg) : null,
     ov ? h('div', { style: { margin: '0 0 10px' } },
       ov.description ? h('div', { className: 'dgs-sub', style: { marginBottom: 6 } }, ov.description) : null,
       h('div', { className: 'dgs-row', style: { gap: 14 } },
         h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => setTab('commits') }, '⎇ ' + (ov.numCommits || 0) + ' 提交'),
         h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => setTab('branches') }, '⑂ ' + (ov.numBranches || 0) + ' 分支'),
         h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => setTab('releases') }, '◎ ' + (ov.numTags || 0) + ' 标签 · ⌘ ' + (ov.numReleases || 0) + ' 发版'),
-        h('span', { className: 'dgs-sub' }, '★ ' + (ov.numStars || 0)),
-        h('span', { className: 'dgs-sub' }, '⑂ ' + (ov.numForks || 0)),
-        h('span', { className: 'dgs-sub' }, '👁 ' + (ov.numWatches || 0))),
+        h('span', { className: 'dgs-sub' }, '⑂ ' + (ov.numForks || 0) + ' fork')),
       cloneUrl ? h('div', { className: 'dgs-row', style: { margin: '8px 0 0' } },
         h('input', { className: 'dgs-input', readOnly: true, value: cloneUrl, onFocus: (e) => e.target.select(), style: { maxWidth: 420 } }),
         h('button', { className: 'dgs-btn ghost', onClick: () => {
@@ -223,13 +251,16 @@ function RepoBrowser({ repo, t, onBack }) {
           setCopied(true); setTimeout(() => setCopied(false), 1600)
         } }, copied ? t('copied') : t('copy'))) : null) : null,
     h('div', { className: 'dgs-tabs' },
-      ['files', 'commits', 'branches', 'issues', 'pulls', 'wiki', 'releases', 'settings'].map((k) =>
+      ['files', 'issues', 'pulls', 'wiki', 'releases', 'settings'].map((k) =>
         h('button', { key: k, className: 'dgs-tab' + (tab === k ? ' active' : ''), onClick: () => setTab(k) }, t(k)))),
+      (tab === 'commits' || tab === 'branches' || tab === 'tags') ? h('div', { className: 'dgs-tabs' },
+        h('button', { className: 'dgs-tab', onClick: () => setTab('files') }, t('files')),
+        h('button', { className: 'dgs-tab active' }, tab === 'commits' ? t('commits') : tab === 'branches' ? t('branches') : '标签')) : null,
     tab === 'files' && h(FileTree, { repo, rev: rev || 'master', t, overview: ov, onOverview: setOv }),
     tab === 'commits' && h(Commits, { repo, rev: rev || 'master', t }),
-    tab === 'branches' && h(Branches, { repo, t }),
+    tab === 'branches' && h(Branches, { repo, t, onNewPR: (head, base) => { setPrPreset({ head, base }); setTab('pulls') } }),
     tab === 'issues' && h(IssuesArea, { repo, t }),
-    tab === 'pulls' && h(Pulls, { repo, t }),
+    tab === 'pulls' && h(Pulls, { repo, t, preset: prPreset, onPresetDone: () => setPrPreset(null) }),
     tab === 'wiki' && h(WikiView, { repo, t }),
     tab === 'releases' && h(Releases, { repo, t }),
     tab === 'settings' && h(RepoSettings, { repo, t }),
@@ -397,17 +428,48 @@ function DiffView({ patch }) {
       })))))
 }
 
-function Branches({ repo, t }) {
+function Branches({ repo, t, onNewPR }) {
   const [list, setList] = useState(null)
+  const [tags, setTags] = useState(null)
+  const [rels, setRels] = useState([])
+  const [def, setDef] = useState('')
+  const reload = () => api('GET', `/repos/${repo.owner}/${repo.name}/branches`).then((d) => setList(d.branches || []))
   useEffect(() => {
-    api('GET', `/repos/${repo.owner}/${repo.name}/branches`).then((d) => setList(d.branches || []))
+    reload()
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/overview`).then((d) => setDef(d.defaultBranch || ''))
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/tags`).then((d) => setTags(Array.isArray(d) ? d : []))
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/releases`).then((d) => setRels(Array.isArray(d) ? d : (d.data || [])))
   }, [repo.owner, repo.name])
   if (list === null) return h('div', { className: 'dgs-empty' }, t('loading'))
-  return h('table', { className: 'dgs-table' },
-    h('tbody', null, list.map((b) =>
-      h('tr', { key: b.name },
-        h('td', { style: { fontWeight: 500 } }, b.name),
-        h('td', { className: 'dgs-sub', style: { textAlign: 'right' } }, (b.sha || '').slice(0, 10))))))
+  return h('div', null,
+    h('table', { className: 'dgs-table' },
+      h('tbody', null, list.map((b) =>
+        h('tr', { key: b.name },
+          h('td', { style: { fontWeight: 500 } },
+            b.name,
+            b.name === def ? h('span', { className: 'dgs-badge ok', style: { marginLeft: 8 } }, '默认') : null),
+          h('td', { className: 'dgs-sub', style: { textAlign: 'right' } },
+            (b.sha || '').slice(0, 10),
+            b.name !== def ? h('button', { className: 'dgs-btn ghost', style: { marginLeft: 8, padding: '2px 8px' }, onClick: () => onNewPR && onNewPR(b.name, def) }, '+ PR') : null,
+            b.name !== def ? h('button', { className: 'dgs-btn danger', style: { marginLeft: 4, padding: '2px 8px' }, onClick: async () => {
+              if (!confirm('删除分支 ' + b.name + ' ？')) return
+              await api('DELETE', `/repos/${repo.owner}/${repo.name}/branches/${encodeURIComponent(b.name)}`)
+              reload()
+            } }, '删') : null))))),
+    h('div', { style: { fontWeight: 700, margin: '18px 0 8px' } }, '标签'),
+    tags === null ? h('div', { className: 'dgs-empty' }, t('loading'))
+      : tags.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
+      : h('table', { className: 'dgs-table' },
+          h('tbody', null, tags.map((tg) => {
+            const released = rels.some((r) => r.tag === tg.name)
+            return h('tr', { key: tg.name },
+              h('td', { style: { fontWeight: 500 } },
+                '◎ ' + tg.name,
+                released ? h('span', { className: 'dgs-badge ok', style: { marginLeft: 8 } }, '已发版') : null),
+              h('td', { className: 'dgs-sub' }, tg.msg || ''),
+              h('td', { className: 'dgs-sub', style: { textAlign: 'right', whiteSpace: 'nowrap' } },
+                (tg.sha || '') + ' · ' + fmtDate(tg.date)))
+          }))))
 }
 
 function IssuesArea({ repo, t }) {
@@ -424,18 +486,21 @@ function IssuesArea({ repo, t }) {
 function Issues({ repo, t }) {
   const [state, setState] = useState('open')
   const [flt, setFlt] = useState({ label: '', milestone: '', assignee: '' })
+  const [sort, setSort] = useState('latest')
+  const [search, setSearch] = useState('')
   const [list, setList] = useState(null)
   const [meta, setMeta] = useState({ labels: [], milestones: [], collabs: [] })
   const [creating, setCreating] = useState(false)
   const [openIdx, setOpenIdx] = useState(null)
   const reload = useCallback(() => {
     setList(null)
-    const q = new URLSearchParams({ state })
+    const q = new URLSearchParams({ state, sort })
     if (flt.label) q.set('label', flt.label)
     if (flt.milestone) q.set('milestone', flt.milestone)
     if (flt.assignee) q.set('assignee', flt.assignee)
+    if (search.trim()) q.set('search', search.trim())
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/issues?` + q).then((d) => setList(Array.isArray(d) ? d : (d.issues || [])))
-  }, [repo.owner, repo.name, state, flt])
+  }, [repo.owner, repo.name, state, flt, sort, search])
   useEffect(reload, [reload])
   useEffect(() => {
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/labels`).then((d) => setMeta((m) => ({ ...m, labels: Array.isArray(d) ? d : [] })))
@@ -459,7 +524,11 @@ function Issues({ repo, t }) {
       fltSel('label', meta.labels, '标签'),
       fltSel('milestone', meta.milestones, '里程碑'),
       fltSel('assignee', meta.collabs, '负责人'),
-      (flt.label || flt.milestone || flt.assignee) ? h('button', { className: 'dgs-btn ghost', onClick: () => setFlt({ label: '', milestone: '', assignee: '' }) }, t('retry')) : null),
+      h('select', { className: 'dgs-input', style: { maxWidth: 150, flex: 'none', width: 'auto', padding: '5px 8px' }, value: sort, onChange: (e) => setSort(e.target.value) },
+        [['latest', '最新'], ['oldest', '最旧'], ['recentupdate', '最近更新'], ['leastupdate', '最久未更新'], ['mostcomment', '最多评论'], ['leastcomment', '最少评论']].map(([v, label]) =>
+          h('option', { key: v, value: v }, '排序: ' + label))),
+      h('input', { className: 'dgs-input', style: { maxWidth: 180, flex: 'none' }, placeholder: '搜索标题/内容', value: search, onChange: (e) => setSearch(e.target.value) }),
+      (flt.label || flt.milestone || flt.assignee || search) ? h('button', { className: 'dgs-btn ghost', onClick: () => { setFlt({ label: '', milestone: '', assignee: '' }); setSearch('') } }, '清除') : null),
     list === null ? h('div', { className: 'dgs-empty' }, t('loading'))
       : list.length === 0 ? h('div', { className: 'dgs-empty' }, t('noIssues'))
       : h('div', null, list.map((i) => issueRow(i)))
@@ -506,6 +575,7 @@ function IssueDetail({ repo, idx, t, onBack }) {
   const [comments, setComments] = useState(null)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
+  const [editC, setEditC] = useState(null)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState({ title: '', body: '' })
   const [allLabels, setAllLabels] = useState([])
@@ -578,8 +648,23 @@ function IssueDetail({ repo, idx, t, onBack }) {
       : comments.length === 0 ? h('div', { className: 'dgs-empty' }, t('noIssues'))
       : comments.map((c) =>
           h('div', { key: c.id, className: 'dgs-comment' },
-            h('div', { className: 'dgs-sub', style: { marginBottom: 4 } }, `${c.user || ''} · ${fmtDate(c.created)}`),
-            h('div', { style: { whiteSpace: 'pre-wrap' } }, c.body))),
+            h('div', { className: 'dgs-row', style: { marginBottom: 4 } },
+              h('span', { className: 'dgs-sub' }, `${c.user || ''} · ${fmtDate(c.created)}`),
+              h('span', { style: { flex: 1 } }),
+              c.id ? h('button', { className: 'dgs-btn ghost', style: { padding: '1px 8px' }, onClick: () => { setEditC({ id: c.id, text: c.body }) } }, '编辑') : null,
+              c.id ? h('button', { className: 'dgs-btn danger', style: { padding: '1px 8px' }, onClick: async () => {
+                if (!confirm('删除此评论？')) return
+                await api('DELETE', `/repos/${repo.owner}/${repo.name}/issues/comments/${c.id}`)
+                reload()
+              } }, '删') : null),
+            editC && editC.id === c.id ? h('div', null,
+              h('textarea', { className: 'dgs-input', value: editC.text, onChange: (e) => setEditC({ ...editC, text: e.target.value }) }),
+              h('div', { className: 'dgs-row', style: { marginTop: 4 } },
+                h('button', { className: 'dgs-btn', onClick: async () => {
+                  await api('PATCH', `/repos/${repo.owner}/${repo.name}/issues/comments/${c.id}`, { body: editC.text })
+                  setEditC(null); reload()
+                } }, t('save'))))
+              : h('div', { style: { whiteSpace: 'pre-wrap' } }, c.body))),
     h('div', { className: 'dgs-card', style: { margin: '12px 0' } },
       h('textarea', { className: 'dgs-input', placeholder: t('commentPlaceholder'), value: text, onChange: (e) => setText(e.target.value) }),
       h('div', { className: 'dgs-row', style: { marginTop: 8 } },
@@ -759,15 +844,19 @@ function RepoSettings({ repo, t }) {
   const [form, setForm] = useState({ description: '', private: false })
   const [collabs, setCollabs] = useState([])
   const [addName, setAddName] = useState('')
+  const [hooks, setHooks] = useState(null)
+  const [hookUrl, setHookUrl] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const loadCollabs = () => api('GET', `/dsh/repos/${repo.owner}/${repo.name}/collaborators`).then((d) => setCollabs(Array.isArray(d) ? d : []))
+  const loadHooks = () => api('GET', `/dsh/repos/${repo.owner}/${repo.name}/hooks`).then((d) => setHooks(Array.isArray(d) ? d : []))
   useEffect(() => {
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}`).then((d) => {
       if (d && d.name) { setInfo(d); setForm({ description: d.description || '', private: !!d.private }) }
       else setMsg((d && d.error) || t('loadFailed'))
     })
     loadCollabs()
+    loadHooks()
   }, [repo.owner, repo.name])
   return h('div', null,
     msg ? h('div', { className: 'dgs-err' }, msg) : null,
@@ -806,12 +895,40 @@ function RepoSettings({ repo, t }) {
               h('button', { className: 'dgs-btn danger', onClick: async () => {
                 await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/collaborators/${encodeURIComponent(u.name)}`)
                 loadCollabs()
-              } }, t('delete')))))))
+              } }, t('delete'))))),
+          h('div', { className: 'dgs-card', style: { marginTop: 12 } },
+            h('div', { style: { fontWeight: 700, marginBottom: 8 } }, 'Webhook'),
+            h('div', { className: 'dgs-row' },
+              h('input', { className: 'dgs-input', placeholder: 'https://…', value: hookUrl, onChange: (e) => setHookUrl(e.target.value) }),
+              h('button', { className: 'dgs-btn', disabled: !hookUrl.trim(), onClick: async () => {
+                const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/hooks`, { url: hookUrl.trim() })
+                if (d && !d.error) { setHookUrl(''); loadHooks() } else setMsg((d && d.error) || 'failed')
+              } }, '+ 添加')),
+            (hooks || []).map((hk) => h('div', { key: hk.id, className: 'dgs-row', style: { marginTop: 6 } },
+              h('span', { className: 'dgs-badge' + (hk.is_active ? ' ok' : ' closed') }, hk.is_active ? '启用' : '停用'),
+              h('span', { className: 'dgs-sub', style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' } }, hk.url),
+              h('button', { className: 'dgs-btn ghost', onClick: async () => {
+                await api('PATCH', `/dsh/repos/${repo.owner}/${repo.name}/hooks/${hk.id}`, { active: !hk.is_active }); loadHooks()
+              } }, hk.is_active ? '停用' : '启用'),
+              h('button', { className: 'dgs-btn danger', onClick: async () => {
+                await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/hooks/${hk.id}`); loadHooks()
+              } }, t('delete')))),
+            hooks !== null && hooks.length === 0 ? h('div', { className: 'dgs-sub', style: { marginTop: 6 } }, '—') : null),
+          h('div', { className: 'dgs-card', style: { marginTop: 12, borderColor: 'var(--dsw-alias-state-error-primary)55' } },
+            h('div', { style: { fontWeight: 700, marginBottom: 8, color: 'var(--dsw-alias-state-error-primary)' } }, '危险区域'),
+            h('div', { className: 'dgs-row' },
+              h('span', { className: 'dgs-sub', style: { flex: 1 } }, '删除此仓库（含所有工单/PR/Wiki）'),
+              h('button', { className: 'dgs-btn danger', onClick: async () => {
+                if (!confirm('确定删除仓库 ' + repo.name + ' ？此操作不可恢复')) return
+                const d = await api('DELETE', '/repos/' + repo.owner + '/' + repo.name)
+                if (d && d.ok) nav('/repos')
+                else setMsg((d && d.error) || '删除失败')
+              } }, t('delete') + ' ' + repo.name)))))
 }
 
 // ── PR（列表 + 详情 + 合并 + 评论复用 issue 通道） ────────────────────────
 
-function Pulls({ repo, t }) {
+function Pulls({ repo, t, preset, onPresetDone }) {
   const [list, setList] = useState(null)
   const [openIdx, setOpenIdx] = useState(null)
   const [creating, setCreating] = useState(false)
@@ -836,6 +953,13 @@ function Pulls({ repo, t }) {
       setForm((f) => ({ ...f, base: d.defaultBranch || 'master' }))
     })
   }, [repo.owner, repo.name])
+  useEffect(() => {
+    if (preset) {
+      setCreating(true)
+      setForm((f) => ({ ...f, head: preset.head, base: preset.base || f.base }))
+      onPresetDone && onPresetDone()
+    }
+  }, [preset])
   if (openIdx !== null) return h(PullDetail, { repo, idx: openIdx, t, onBack: () => { setOpenIdx(null); reload() } })
   if (list === null) return h('div', { className: 'dgs-empty' }, t('loading'))
   return h('div', null,
@@ -881,6 +1005,7 @@ function PullDetail({ repo, idx, t, onBack }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
+  const [mergeStyle, setMergeStyle] = useState('merge')
   useEffect(() => {
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/pulls`).then((d) => {
       const all = Array.isArray(d) ? d : (d.data || d.pulls || [])
@@ -895,14 +1020,24 @@ function PullDetail({ repo, idx, t, onBack }) {
       h('span', { style: { fontWeight: 600 } }, `#${idx} ${pr.title}`),
       h('span', { className: 'dgs-sub' }, `${pr.head} ${t('headToBase')} ${pr.base}`),
       h('span', { style: { flex: 1 } }),
-      pr.state === 'open' ? h('button', { className: 'dgs-btn', disabled: busy,
-        onClick: async () => {
-          if (!confirm(t('mergeConfirm'))) return
-          setBusy(true); setMsg('')
-          const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/pulls/${idx}/merge`)
-          setBusy(false)
-          d.ok !== false && !d.error ? onBack() : setMsg(d.error || 'merge failed')
-        } }, '⇆ ' + t('merge')) : h('span', { className: 'dgs-badge' }, t('prMerged'))),
+      pr.state === 'open' ? h('div', { className: 'dgs-row', style: { gap: 6 } },
+        h('select', { className: 'dgs-input', style: { maxWidth: 120, flex: 'none', width: 'auto', padding: '5px 8px' }, value: mergeStyle, onChange: (e) => setMergeStyle(e.target.value) },
+          [['merge', '合并提交'], ['squash', '压缩合并'], ['rebase', '变基合并']].map(([v, label]) => h('option', { key: v, value: v }, label))),
+        h('button', { className: 'dgs-btn', disabled: busy,
+          onClick: async () => {
+            if (!confirm(t('mergeConfirm'))) return
+            setBusy(true); setMsg('')
+            const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/pulls/${idx}/merge`, { style: mergeStyle })
+            setBusy(false)
+            d.ok !== false && !d.error ? onBack() : setMsg(d.error || 'merge failed')
+          } }, '⇆ ' + t('merge')),
+        h('button', { className: 'dgs-btn danger', disabled: busy,
+          onClick: async () => {
+            if (!confirm('不合并直接关闭此 PR？')) return
+            setBusy(true)
+            await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/pulls/${idx}/close`)
+            setBusy(false); onBack()
+          } }, '关闭')) : h('span', { className: 'dgs-badge' }, t('prMerged'))),
     msg ? h('div', { className: 'dgs-err' }, msg) : null,
     (comments || []).map((c) =>
       h('div', { key: c.id, className: 'dgs-comment' },
@@ -925,6 +1060,7 @@ function PullDetail({ repo, idx, t, onBack }) {
 function WikiView({ repo, t }) {
   const [pages, setPages] = useState(null)
   const [page, setPage] = useState(null) // {name, html, content}
+  const [hist, setHist] = useState(null)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [creating, setCreating] = useState(false)
@@ -937,7 +1073,7 @@ function WikiView({ repo, t }) {
   }, [repo.owner, repo.name])
   useEffect(reload, [reload])
   const openPage = (name) => {
-    setEditing(false); setCreating(false); setMsg('')
+    setEditing(false); setCreating(false); setMsg(''); setHist(null)
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/wiki/${encodeURIComponent(name)}`)
       .then((d) => d.html !== undefined ? setPage(d) : setPage({ name, missing: true, content: '', html: '' }))
   }
@@ -989,7 +1125,21 @@ function WikiView({ repo, t }) {
               h('div', { className: 'dgs-row', style: { margin: '4px 0 8px' } },
                 h('span', { style: { fontWeight: 600 } }, page.name),
                 h('span', { style: { flex: 1 } }),
-                h('button', { className: 'dgs-btn ghost', onClick: () => { setDraft(page.content || ''); setEditing(true) } }, t('edit'))),
+                h('button', { className: 'dgs-btn ghost', onClick: () => { setDraft(page.content || ''); setEditing(true) } }, t('edit')),
+                h('button', { className: 'dgs-btn ghost', onClick: () => {
+                  api('GET', `/dsh/repos/${repo.owner}/${repo.name}/wiki/${encodeURIComponent(page.name)}/commits`).then((d) => setHist(Array.isArray(d) ? d : []))
+                } }, '历史'),
+                h('button', { className: 'dgs-btn danger', onClick: async () => {
+                  if (!confirm('删除页面 ' + page.name + ' ？')) return
+                  await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/wiki/${encodeURIComponent(page.name)}`)
+                  setPage(null); reload()
+                } }, t('delete'))),
+              hist ? h('div', { className: 'dgs-card', style: { margin: '8px 0', padding: '8px 14px' } },
+                hist.length === 0 ? h('span', { className: 'dgs-sub' }, '—')
+                  : hist.map((cm, i) => h('div', { key: i, className: 'dgs-row', style: { padding: '2px 0' } },
+                      h('span', { className: 'dgs-sub', style: { minWidth: 64 } }, (cm.sha || '').slice(0, 7)),
+                      h('span', { style: { flex: 1 } }, cm.message || ''),
+                      h('span', { className: 'dgs-sub' }, (cm.author || '') + ' · ' + fmtDate(cm.date))))) : null,
               h('div', { className: 'dgs-card' },
                 h('div', { className: 'dgs-md', dangerouslySetInnerHTML: { __html: page.html } }))))))
 }
@@ -1038,12 +1188,17 @@ function Releases({ repo, t }) {
       h('div', { className: 'dgs-sub', style: { margin: '6px 0 0' } }, '标签不存在时会基于所选分支自动创建 git 标签'),
       h('textarea', { className: 'dgs-input', placeholder: t('relNote'), value: form.note, onChange: (e) => setForm({ ...form, note: e.target.value }) }),
       h('div', { className: 'dgs-row', style: { marginTop: 8 } },
+        h('label', { className: 'dgs-sub', style: { display: 'flex', gap: 4, alignItems: 'center' } },
+          h('input', { type: 'checkbox', checked: form.prerelease, onChange: (e) => setForm({ ...form, prerelease: e.target.checked }) }), '预发布版本'),
+        h('label', { className: 'dgs-sub', style: { display: 'flex', gap: 4, alignItems: 'center' } },
+          h('input', { type: 'checkbox', checked: form.draft, onChange: (e) => setForm({ ...form, draft: e.target.checked }) }), '存为草稿'),
+        h('span', { style: { flex: 1 } }),
         h('button', { className: 'dgs-btn', disabled: busy || !form.tag.trim(),
           onClick: async () => {
             setBusy(true); setMsg('')
             const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/releases`, form)
             setBusy(false)
-            if (d.ok) { setCreating(false); setForm({ tag: '', title: '', note: '', target: '' }); reload() }
+            if (d.ok) { setCreating(false); setForm({ tag: '', title: '', note: '', target: '', prerelease: false, draft: false }); reload() }
             else setMsg(d.error || 'failed')
           } }, t('submit')))) : null,
     list === null ? h('div', { className: 'dgs-empty' }, t('loading'))
@@ -1067,6 +1222,8 @@ function Releases({ repo, t }) {
           : h('div', { key: r.id, className: 'dgs-card' },
             h('div', { className: 'dgs-row' },
               h('span', { className: 'dgs-badge ok' }, r.tag),
+              r.draft ? h('span', { className: 'dgs-badge' }, '草稿') : null,
+              r.prerelease ? h('span', { className: 'dgs-badge pri' }, '预发布') : null,
               h('span', { style: { fontWeight: 600 } }, r.title),
               h('span', { style: { flex: 1 } }),
               h('span', { className: 'dgs-sub' }, (r.author || '') + ' · ' + fmtDate((r.createdAt || 0) * 1000)),

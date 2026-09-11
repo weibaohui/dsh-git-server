@@ -304,7 +304,8 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     const commits = (await git.git(dir, 'log', '--pretty=format:%H%x1f%s%x1f%an%x1f%aI', '--end-of-options', `${base}..${head}`, '--'))
       ?.toString('utf8').split('\n').filter(Boolean).map((l) => { const [sha, message, author, date] = l.split('\x1f'); return { sha, message, author, date } }) ?? [];
     const diff = (await git.git(dir, 'diff', '--stat', '--end-of-options', `${base}...${head}`))?.toString('utf8') ?? '';
-    c.JSONSuccess({ base, head, commits, diffStat: diff });
+    const diffFull = (await git.git(dir, 'diff', '--unified=3', '--end-of-options', `${base}...${head}`))?.toString('utf8') ?? '';
+    c.JSONSuccess({ base, head, commits, diffStat: diff, diff: diffFull });
   });
 
   // ── 源码下载（archive zip/tar.gz，二进制流） ──────────────────

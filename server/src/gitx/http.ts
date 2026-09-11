@@ -110,7 +110,7 @@ export function handleGitHTTP(req: http.IncomingMessage, res: http.ServerRespons
       // public repo pull requires no auth (unless REQUIRE_SIGNIN_VIEW)
       if (!(isPull && !repo.is_private && !conf.requireSigninView)) {
         const authHeader = String(req.headers.authorization ?? '');
-        const authed = authenticateUserByBasic(authHeader);
+        const authed = await authenticateUserByBasic(authHeader);
         if (!authed) {
           res.statusCode = 401;
           res.setHeader('WWW-Authenticate', 'Basic realm="."');

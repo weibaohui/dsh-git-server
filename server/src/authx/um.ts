@@ -1,173 +1,156 @@
-// dsh 桥：user-management 用户库凭据验证（供 dsh-git-server 插件模式使用）。
+// dsh 服务桥：登录认证直接走 user-management 插件的 service。
 //
-// 启用方式：环境变量 DSH_UM_USERS_FILE 指向 user-management 的 users.json
-// （通常 ~/.dsh/user-management/users.json）。启用后：
-//   - git HTTP Basic 认证（authenticateUserByBasic）优先对 UM 用户库验证；
-//   - 网页登录（/api/web/user/sign-in）同样接受 UM 用户名/密码。
-// 账户单一来源：本库不设独立账号体系，UM 用户验证通过时按需创建**同名**
-// 本库账号，并把本库存储密码同步为 UM 密码（用户名/密码/角色三对齐）。
-// UM admin → 本库管理员；UM 侧改密后下次认证自动跟随；disabled 拒绝。
+// 注入方式（dsh 插件 service 模式）：本模块按 DSH_UM_STORE_PATH 加载
+// user-management 插件的 store 模块（src/store.js，CJS），createStore 后
+// 调用其公开 API（checkLogin / findUserByUsername）——与 UM 网关进程
+// 完全同一代码路径。不再复刻 scrypt 校验，也不把密码同步进本库。
 //
-// 口令格式跨仓复刻 user-management store.js：crypto.scrypt（salt 为 hex 字符串、
-// hex hash，N=16384/r=8/p=1，keylen 32）。users.json 缺失/损坏 → 桥不可用，
-// 回退本库认证，绝不把人锁死在外面。
+// 本库 user 表只承载「影子账号」：身份/仓库所有权/令牌归属。passwd 字段
+// 永远是不可用占位（随机盐+随机哈希），任何登录路径都不校验它。
+//
+// 一致性：UM 网关是另一进程，users.json 的外部写入（建号/改密/禁用）
+// 通过 mtime+size 指纹检测——变化即重建 store 实例（load 重读文件），
+// 未变化时复用实例（checkLogin 仅付 scrypt 成本，约几十毫秒）。
 import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { createRequire } from 'node:module';
+import { createHash, randomBytes } from 'node:crypto';
 import * as dbm from '../db/db.js';
-import { randomSalt, encodePassword } from './password.js';
-import { createHash, scryptSync, timingSafeEqual } from 'node:crypto';
 
-const KEY_LEN = 32;
-const SCRYPT_COST = 16384;
-const POSITIVE_TTL_MS = 5 * 60 * 1000;
-const NEGATIVE_TTL_MS = 30 * 1000;
-const CACHE_MAX = 500;
-// 与 user-management 登录同款：缺失用户也烧一次哈希时间，防用户名枚举
-const DUMMY_SALT = '0'.repeat(32);
+const requireCjs = createRequire(import.meta.url);
 
-let cacheUsers: any[] | null = null;
-let cacheStamp: string | null = null;
-const verdicts = new Map<string, { ok: boolean; expiresAt: number }>();
+let storeMod: any = null; // user-management store 模块（一次性加载）
+let storeInst: any = null; // 当前 store 实例（users.json 指纹未变时复用）
+let storeStamp: string | null = null;
+let storeHome: string | null = null;
 
-export function umUsersFile(): string | null {
-  const f = process.env.DSH_UM_USERS_FILE || '';
-  return f ? f : null;
+export function umStorePath(): string {
+  return process.env.DSH_UM_STORE_PATH || '';
 }
 
-export function umAuthEnabled(): boolean {
-  return !!umUsersFile();
+export function umServiceEnabled(): boolean {
+  return !!umStorePath();
 }
 
-function loadUsers(): any[] | null {
-  const file = umUsersFile();
-  if (!file) return null;
-  let stamp: string | null = null;
+/** dsh 数据根（store 的 <home>/user-management）。 */
+function dshHome(): string {
+  return process.env.DSH_UM_HOME ? path.resolve(process.env.DSH_UM_HOME) : path.join(os.homedir(), '.dsh');
+}
+
+/** 取可用的 store 实例；users.json 指纹变化时重建。 */
+async function getStore(): Promise<any | null> {
+  const modPath = umStorePath();
+  if (!modPath) return null;
   try {
-    const st = fs.statSync(file);
-    stamp = `${st.mtimeMs}:${st.size}`;
-  } catch {
-    cacheUsers = null;
-    cacheStamp = null;
-    return null;
-  }
-  if (stamp === cacheStamp && cacheUsers) return cacheUsers;
-  try {
-    const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const users = Array.isArray(doc && doc.users) ? doc.users : null;
-    if (!users) {
-      cacheUsers = null;
-      cacheStamp = null;
-      return null;
+    if (!storeMod) storeMod = requireCjs(modPath);
+    if (!storeHome) storeHome = dshHome();
+    const usersFile = path.join(storeHome, 'user-management', 'users.json');
+    let stamp = 'missing';
+    try {
+      const st = fs.statSync(usersFile);
+      stamp = `${st.mtimeMs}:${st.size}`;
+    } catch {}
+    if (!storeInst || stamp !== storeStamp) {
+      const inst = storeMod.createStore({ home: storeHome });
+      await inst.load();
+      storeInst = inst;
+      storeStamp = stamp;
     }
-    cacheUsers = users;
-    cacheStamp = stamp;
-    return users;
-  } catch {
-    cacheUsers = null;
-    cacheStamp = null;
+    return storeInst;
+  } catch (e) {
+    storeInst = null;
+    storeStamp = null;
     return null;
   }
 }
 
+/** 服务可用性：'ok'（store 模块可加载）| 'missing'（模块缺失）| 'disabled'。 */
 export function umAvailability(): 'ok' | 'missing' | 'disabled' {
-  if (!umAuthEnabled()) return 'disabled';
-  return loadUsers() ? 'ok' : 'missing';
-}
-
-export function umUserRecord(username: string): any | null {
-  const users = loadUsers();
-  return users ? users.find((u) => u && u.username === username) || null : null;
+  if (!umServiceEnabled()) return 'disabled';
+  try {
+    fs.accessSync(umStorePath());
+    return 'ok';
+  } catch {
+    return 'missing';
+  }
 }
 
 /**
- * 账户拉通（用户名+密码+角色三对齐）：UM 用户验证通过后，在本库创建/复用
- * 同名账号，并把本库存储密码同步为本次验证通过的 UM 密码——网页登录、git
- * Basic、API Basic 全场景密码一致。UM 侧改密后，下次认证自动跟随。
+ * 登录校验（直接调 UM service 的 checkLogin）：
+ *   result 'ok' → { ok: true, user }（UM publicUser：id/username/role/disabled/totpEnabled…）
+ *   TOTP 账号明确拒绝（Basic/网页直登无处输入动态码）
+ *   'disabled' → reason 'disabled'；'invalid' → reason 'bad-password'
+ *   store 模块/用户库不可用 → unavailable（上层回退本地兜底账号）
  */
-export function ensureAlignedUser(username: string, password: string): any | null {
-  const rec = umUserRecord(username);
-  if (!rec || rec.disabled) return null;
-  if (typeof password !== 'string' || !password) return null;
-  const isAdmin = rec.role === 'admin' ? 1 : 0;
-  let user = dbm.getUserByUsername(username);
-  const now = Math.floor(Date.now() / 1000);
-  if (!user) {
-    const salt = randomSalt();
-    const pbkdf2 = encodePassword(password, salt);
-    dbm.db().prepare(
-      'INSERT INTO user (name, lower_name, email, passwd, salt, type, is_admin, created_unix, updated_unix) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)'
-    ).run(username, username.toLowerCase(), `${username.toLowerCase()}@users.dsh.local`, pbkdf2, salt, isAdmin, now, now);
-  } else {
-    const want = encodePassword(password, user.salt);
-    if (want !== user.passwd) {
-      dbm.db().prepare('UPDATE user SET passwd = ?, updated_unix = ? WHERE id = ?').run(want, now, user.id);
-    }
-    if ((user.is_admin === 1 ? 1 : 0) !== isAdmin) {
-      dbm.db().prepare('UPDATE user SET is_admin = ?, updated_unix = ? WHERE id = ?').run(isAdmin, now, user.id);
-    }
-  }
-  return dbm.getUserByUsername(username) ?? null;
-}
-
-function verifyScrypt(record: any, password: string): boolean {
-  if (!record || !record.salt || !record.passHash || typeof password !== 'string') return false;
-  let expected: Buffer;
-  try {
-    expected = Buffer.from(record.passHash, 'hex');
-  } catch {
-    return false;
-  }
-  let derived: Buffer;
-  try {
-    derived = scryptSync(password, record.salt, KEY_LEN, { N: SCRYPT_COST, r: 8, p: 1 });
-  } catch {
-    return false;
-  }
-  if (derived.length !== expected.length) return false;
-  return timingSafeEqual(derived, expected);
-}
-
-function burnHash(password: string): void {
-  try {
-    scryptSync(password, DUMMY_SALT, KEY_LEN, { N: SCRYPT_COST, r: 8, p: 1 });
-  } catch {}
-}
-
-/**
- * check(username, password) → { ok, reason?, unavailable? }
- * reason: 'no-user' | 'disabled' | 'totp' | 'bad-password'（只进日志，HTTP 侧统一 401）
- */
-export function umCheck(username: string, password: string): { ok: boolean; reason?: string; unavailable?: boolean } {
+export async function umCheckLogin(username: string, password: string): Promise<{ ok: boolean; user?: any; reason?: string; unavailable?: boolean }> {
   if (typeof username !== 'string' || !username || typeof password !== 'string' || !password) {
     return { ok: false };
   }
-  const users = loadUsers();
-  if (!users) return { ok: false, unavailable: true };
-
-  const key = createHash('sha256').update(username + '\0' + password).digest('hex');
-  const hit = verdicts.get(key);
-  if (hit) {
-    if (Date.now() > hit.expiresAt) verdicts.delete(key);
-    else return { ok: hit.ok };
+  const store = await getStore();
+  if (!store) return { ok: false, unavailable: true };
+  try {
+    const outcome = await store.checkLogin(username, password);
+    if (outcome.result === 'ok' && outcome.user) {
+      if (outcome.user.totpEnabled) return { ok: false, reason: 'totp' };
+      return { ok: true, user: outcome.user };
+    }
+    return { ok: false, reason: outcome.result === 'disabled' ? 'disabled' : 'bad-password' };
+  } catch {
+    return { ok: false, unavailable: true };
   }
+}
 
-  const user = users.find((u) => u && u.username === username);
-  let ok = false;
-  let reason: string | undefined;
+/** 按 username 查 UM 用户（publicUser 形态）；服务不可用返回 null。 */
+export async function umFindUser(username: string): Promise<any | null> {
+  const store = await getStore();
+  if (!store || typeof store.findUserByUsername !== 'function') return null;
+  try {
+    const u = store.findUserByUsername(username);
+    return u ? { id: u.id, username: u.username, role: u.role, disabled: !!u.disabled, totpEnabled: !!u.totpSecret } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 影子开户/对齐：按 UM profile 维护本库同名行（仓库所有权/令牌归属的载体）。
+ * 只同步身份与角色（UM admin → 本库管理员）；密码永不同步——passwd 为
+ * 随机不可用占位，任何登录路径都不校验它（校验永远走 UM service）。
+ */
+export function ensureShadowUser(profile: any): any | null {
+  if (!profile || !profile.username) return null;
+  if (profile.disabled) return null;
+  const username = String(profile.username);
+  const isAdmin = profile.role === 'admin' ? 1 : 0;
+  const now = Math.floor(Date.now() / 1000);
+  const bootstrapName = (process.env.DSH_BOOTSTRAP_ADMIN || '').split(':')[0] || 'root';
+  let user = dbm.getUserByUsername(username);
   if (!user) {
-    burnHash(password);
-    reason = 'no-user';
-  } else if (user.disabled) {
-    burnHash(password);
-    reason = 'disabled';
-  } else if (user.totpSecret) {
-    // 网页登录处会先走 UM 自己的 MFA 流程走不通，这里 Basic/直登均无法输入动态码：明确拒绝
-    burnHash(password);
-    reason = 'totp';
+    const salt = randomBytes(16).toString('hex');
+    const unusable = createHash('sha256').update(randomBytes(32).toString('hex') + username).digest('hex');
+    dbm.db().prepare(
+      'INSERT INTO user (name, lower_name, email, passwd, salt, type, is_admin, created_unix, updated_unix) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)'
+    ).run(username, username.toLowerCase(), `${username.toLowerCase()}@users.dsh.local`, unusable, salt, isAdmin, now, now);
   } else {
-    ok = verifyScrypt(user, password);
-    if (!ok) reason = 'bad-password';
+    // 既有影子账号：passwd 重置为随机不可用占位（清除历史版本同步过的密码；
+    // 兜底管理员除外——它是 service 不可用时的紧急登录通道）
+    const patch: string[] = [];
+    const args: any[] = [];
+    if ((user.is_admin === 1 ? 1 : 0) !== isAdmin) {
+      patch.push('is_admin = ?');
+      args.push(isAdmin);
+    }
+    if (username !== bootstrapName) {
+      patch.push('passwd = ?', 'salt = ?');
+      args.push(
+        createHash('sha256').update(randomBytes(32).toString('hex') + username).digest('hex'),
+        randomBytes(16).toString('hex'),
+      );
+    }
+    if (patch.length) {
+      dbm.db().prepare(`UPDATE user SET ${patch.join(', ')}, updated_unix = ? WHERE id = ?`).run(...args, now, user.id);
+    }
   }
-  if (verdicts.size >= CACHE_MAX) verdicts.clear();
-  verdicts.set(key, { ok, expiresAt: Date.now() + (ok ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS) });
-  return { ok, reason };
+  return dbm.getUserByUsername(username) ?? null;
 }

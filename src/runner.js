@@ -226,6 +226,20 @@ function killOrphanChildren(tag, logger) {
   } catch {}
 }
 
+/** 定位 user-management 插件的 store 模块（dsh 服务注入）。
+ *  优先 web profile 的安装（软链指向真实仓库）；找不到返回空串——server
+ *  侧据此回退本地兜底账号。DSH_UM_STORE_PATH 环境变量可显式覆盖。 */
+function locateUmStore() {
+  if (process.env.DSH_UM_STORE_PATH) return process.env.DSH_UM_STORE_PATH
+  const candidates = [
+    path.join(dshHome(), 'profiles', 'web', 'node_modules', '@weibaohui', 'user-management', 'src', 'store.js'),
+  ]
+  for (const c of candidates) {
+    try { fs.statSync(c); return c } catch {}
+  }
+  return ''
+}
+
 /** 实例标签：每个数据目录一个持久随机标签（<dataDir>/custom/instance-tag）。 */
 function ensureInstanceTag(cfg) {
   const file = path.join(cfg.dataDir, 'custom', 'instance-tag')
@@ -270,8 +284,10 @@ async function spawnAndReady(cfg, { logger = () => {}, onExit, instanceTag } = {
   }
   if (cfg.adminPassword) env.DSH_ADMIN_PASSWORD = cfg.adminPassword
   if (cfg.impersonateSecret) env.DSH_IMPERSONATE_SECRET = cfg.impersonateSecret
-  // 账户单一来源：始终对接 user-management 用户库（桥内部处理缺失回退）
-  env.DSH_UM_USERS_FILE = process.env.DSH_UM_USERS_FILE || path.join(dshHome(), 'user-management', 'users.json')
+  // 账户单一来源：注入 user-management service（dsh profile 安装的 store 模块，
+  // 与 UM 网关同一代码路径）；server 侧用它直接做登录校验，密码永不同步
+  env.DSH_UM_STORE_PATH = locateUmStore()
+  if (!env.DSH_HOME) env.DSH_HOME = dshHome()
 
   const spawnArgs = instanceTag ? [entry, `--dsh-instance=${instanceTag}`] : [entry]
   const child = spawn(process.execPath, spawnArgs, { cwd: SERVER_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -331,14 +347,10 @@ async function spawnAndReady(cfg, { logger = () => {}, onExit, instanceTag } = {
   return handle
 }
 
-function umUsersFilePath() {
-  return process.env.DSH_UM_USERS_FILE || path.join(dshHome(), 'user-management', 'users.json')
-}
-
 module.exports = {
   ensureDeps,
+  locateUmStore,
   UI_SUBPATH,
-  umUsersFilePath,
   PLUGIN_ID,
   DEFAULTS,
   NUM_RANGES,

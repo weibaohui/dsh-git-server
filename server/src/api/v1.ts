@@ -263,7 +263,7 @@ async function apiContext(c: Context): Promise<APIContext> {
     }
   } else if (parts.length === 2 && parts[0] === 'Basic') {
     const { authenticateUserByBasic } = await import('../context.js');
-    const r = authenticateUserByBasic(authHead);
+    const r = await authenticateUserByBasic(authHead);
     if (r) {
       c.User = r.user;
       c.isBasicAuth = true;

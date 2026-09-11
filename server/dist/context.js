@@ -461,29 +461,39 @@ export function escapePound(str) {
     return String(str).replaceAll('%', '%25').replaceAll('#', '%23').replaceAll(' ', '%20').replaceAll('?', '%3F');
 }
 // ---------------------------------------------------------------- auth
-/** dsh 桥运行时：启用状态 + UM 凭据映射到的本库管理员（懒解析，缓存实例）。 */
-function umRuntime() {
-    const enabled = umBridge.umAuthEnabled();
-    return { enabled, umCheck: umBridge.umCheck, ensureAlignedUser: umBridge.ensureAlignedUser };
-}
-export function authenticateUserByBasic(header) {
+/**
+ * Basic 认证（异步）：本地兜底账号 → user-management service（登录校验
+ * 直接走 UM store 的 checkLogin，影子账号只承载身份/所有权，密码永不在
+ * 本库校验）→ access token。
+ */
+export async function authenticateUserByBasic(header) {
     const parts = header.split(' ');
     if (parts.length !== 2 || parts[0] !== 'Basic')
         return null;
     const [uname, passwd] = basicAuthDecode(parts[1]);
     const user = db.getUserByUsername(uname);
+    // 账户单一来源：UM service 启用时认证只走 service；本地密码仅当
+    // service 不可用（模块/用户库缺失）时作紧急兜底（兜底管理员 root 等）
+    if (umBridge.umServiceEnabled()) {
+        const check = await umBridge.umCheckLogin(uname, passwd);
+        if (check.ok) {
+            const shadow = umBridge.ensureShadowUser(check.user);
+            if (shadow)
+                return { user: shadow, isBasic: true };
+        }
+        if (!check.unavailable) {
+            // service 明确拒绝（错密码/禁用/TOTP）——不落本地校验，防旧同步密码绕过
+            const token = getAccessTokenBySHA1(uname) ?? getAccessTokenBySHA1(passwd);
+            if (token) {
+                const tu = db.getUserByID(token.uid);
+                if (tu)
+                    return { user: tu, isBasic: true };
+            }
+            return null;
+        }
+    }
     if (user && verifyPassword(passwd, user.salt, user.passwd)) {
         return { user, isBasic: true };
-    }
-    // dsh 桥：user-management 用户库（见 authx/um.ts）——同名账户拉通
-    const um = umRuntime();
-    if (um.enabled) {
-        const check = um.umCheck(uname, passwd);
-        if (check.ok) {
-            const aligned = um.ensureAlignedUser(uname, passwd);
-            if (aligned)
-                return { user: aligned, isBasic: true };
-        }
     }
     // try token in either field
     const token = getAccessTokenBySHA1(uname) ?? getAccessTokenBySHA1(passwd);

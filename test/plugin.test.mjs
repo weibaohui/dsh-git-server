@@ -5,11 +5,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { statSync } from 'node:fs'
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
+import { join, dirname } from 'node:path'
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const plugin = (await import('../src/index.js')).default
 const runner = await import('../src/runner.js')
 
@@ -101,14 +103,22 @@ test('插件 apply：注册 settings 与同源路由，disabled 不启动子进�
 
 async function runE2EAttempt() {
   const dataDir = mkdtempSync(join(tmpdir(), 'dgs-e2e-'))
-  const umDir = mkdtempSync(join(tmpdir(), 'dgs-um-'))
-  const umFile = join(umDir, 'users.json')
-  // 造一个 user-management 用户库（scrypt N=16384，与 UM store.js 同款）
-  const { scryptSync, randomBytes } = await import('node:crypto')
-  const salt = randomBytes(16).toString('hex')
-  const hash = scryptSync('Passw0rd!123', salt, 32, { N: 16384, r: 8, p: 1 }).toString('hex')
-  writeFileSync(umFile, JSON.stringify({ seq: 1, users: [{ id: 'u_1_test', username: 'drilluser', role: 'admin', salt, passHash: hash, createdAt: Date.now() }] }))
-  process.env.DSH_UM_USERS_FILE = umFile
+  // dsh 服务注入：定位真实 user-management store 模块（本机插件仓库/ profile）
+  const umStoreCandidates = [
+    process.env.DSH_UM_STORE_PATH,
+    join(repoRoot, '..', 'user-management', 'src', 'store.js'),
+    join(homedir(), '.dsh', 'profiles', 'web', 'node_modules', '@weibaohui', 'user-management', 'src', 'store.js'),
+  ].filter(Boolean)
+  const umStorePath = umStoreCandidates.find((c) => existsSync(c))
+  if (!umStorePath) throw new Error('user-management store 模块不可用（测试需要真实 service）')
+  // 临时 dsh home + 真实 store 建号（与 UM 网关同一代码路径）
+  const umHome = mkdtempSync(join(tmpdir(), 'dgs-umhome-'))
+  const umStore = (await import('node:module')).createRequire(import.meta.url)(umStorePath)
+  const store = umStore.createStore({ home: umHome })
+  await store.load()
+  await store.createUser({ username: 'drilluser', password: 'Passw0rd!123', role: 'admin' })
+  process.env.DSH_UM_STORE_PATH = umStorePath
+  process.env.DSH_UM_HOME = umHome
 
   const { createServer } = await import('node:net')
   const freePort = await new Promise((resolve) => {
@@ -142,12 +152,14 @@ async function runE2EAttempt() {
       body: JSON.stringify({ name: 'demo', auto_init: true, readme: 'Default', private: false }),
     })
     assert.equal(createRes.status, 201)
-    // 密码对齐断言：本库存储的 passwd 必须等于 UM 密码的 PBKDF2
+    // 密码永不同步断言：影子账号的 passwd 是随机不可用占位（≠ UM 密码的哈希），
+    // 登录校验永远走 UM service
     const { encodePassword } = await import('../server/dist/authx/password.js')
     const dbm = (await import('better-sqlite3')).default(join(dataDir, 'gogs.db'))
-    const row = dbm.prepare('SELECT salt, passwd FROM user WHERE name = ?').get('drilluser')
-    assert.ok(row, 'drilluser 已开户')
-    assert.equal(row.passwd, encodePassword('Passw0rd!123', row.salt), '存储密码与 UM 密码一致')
+    const row = dbm.prepare('SELECT salt, passwd, is_admin FROM user WHERE name = ?').get('drilluser')
+    assert.ok(row, 'drilluser 影子账号已开户')
+    assert.notEqual(row.passwd, encodePassword('Passw0rd!123', row.salt), 'passwd 不得同步 UM 密码')
+    assert.equal(row.is_admin, 1, 'UM admin → 影子账号管理员')
     dbm.close()
     // 1) UM 凭据 clone（瞬断重试 3 次）
     let cloned = false
@@ -187,7 +199,8 @@ async function runE2EAttempt() {
   } finally {
     writeFileSync('/tmp/dgs-e2e-log.txt', logLines.join('\n'))
     await handle.stop().catch(() => {})
-    delete process.env.DSH_UM_USERS_FILE
+    delete process.env.DSH_UM_STORE_PATH
+    delete process.env.DSH_UM_HOME
   }
 }
 

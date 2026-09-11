@@ -120,22 +120,25 @@ export async function handleWebAPI(c: Context, subPath: string): Promise<boolean
       const password = String(req.password ?? '');
       const user = db.getUserByUsername(username) ?? db.getUserByEmail(username);
       const { verifyPassword } = await import('./authx/password.js');
-      let authed = !!(user && user.type === 0 && verifyPassword(password, user.salt, user.passwd));
-      // dsh 桥：本库不中时对 user-management 用户库验证，UM 凭据映射到管理员账号
-      if (!authed) {
-        const um = await import('./authx/um.js');
-        if (um.umAuthEnabled()) {
-          const check = um.umCheck(username, password);
-          if (check.ok) {
-            const aligned = um.ensureAlignedUser(username, password);
-            if (aligned && aligned.type === 0) {
-              completeSignIn(c, aligned);
-              c.JSONSuccess({});
-              return true;
-            }
+      // 账户单一来源：UM service 启用时登录只走 service；本地密码仅当
+      // service 不可用时兜底（防影子账号残留的旧同步密码绕过）
+      const um = await import('./authx/um.js');
+      if (um.umServiceEnabled()) {
+        const check = await um.umCheckLogin(username, password);
+        if (check.ok) {
+          const shadow = um.ensureShadowUser(check.user);
+          if (shadow && shadow.type === 0) {
+            completeSignIn(c, shadow);
+            c.JSONSuccess({});
+            return true;
           }
         }
+        if (!check.unavailable) {
+          c.JSON(401, errBody(c.Tr('form.username_password_incorrect'), { username: null, password: null }));
+          return true;
+        }
       }
+      const authed = !!(user && user.type === 0 && verifyPassword(password, user.salt, user.passwd));
       if (!authed) {
         c.JSON(401, errBody(c.Tr('form.username_password_incorrect'), { username: null, password: null }));
         return true;
@@ -160,24 +163,24 @@ export async function handleWebAPI(c: Context, subPath: string): Promise<boolean
     }
     const um = await import('./authx/um.js');
     const secret = process.env.DSH_IMPERSONATE_SECRET || '';
-    const reqSecret = String((await c.form()).secret ?? c.req.headers['x-dsh-secret'] ?? '');
-    if (!um.umAuthEnabled() || !secret || reqSecret !== secret) {
+    const req2 = await c.form();
+    const reqSecret = String(req2.secret ?? c.req.headers['x-dsh-secret'] ?? '');
+    const uname = String(req2.username ?? '').trim();
+    if (!um.umServiceEnabled() || !secret || reqSecret !== secret) {
       c.JSON(404, { error: 'not found' });
       return true;
     }
-    const req2 = await c.form();
-    const uname = String(req2.username ?? '').trim();
-    const rec = um.umUserRecord(uname);
-    if (!rec || rec.disabled) {
+    const rec = await um.umFindUser(uname);
+    if (!rec || rec.disabled || rec.totpEnabled) {
       c.JSON(404, { error: 'user not found' });
       return true;
     }
-    const aligned = um.ensureAlignedUser(uname, '');
-    if (!aligned || aligned.type !== 0) {
+    const shadow = um.ensureShadowUser(rec);
+    if (!shadow || shadow.type !== 0) {
       c.JSON(500, { error: 'provision failed' });
       return true;
     }
-    completeSignIn(c, aligned);
+    completeSignIn(c, shadow);
     c.JSONSuccess({});
     return true;
   }

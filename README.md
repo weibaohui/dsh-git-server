@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@weibaohui/dsh-git-server.svg)](https://www.npmjs.com/package/@weibaohui/dsh-git-server)
 [![license](https://img.shields.io/npm/l/@weibaohui/dsh-git-server.svg)](https://github.com/weibaohui/dsh-git-server/blob/main/LICENSE)
 
-dsh 插件 · Git 服务器：内嵌 [ts-gogs](https://github.com/weibaohui/ts-gogs)（Gogs 的 TypeScript 1:1 平替，源码级融合），把一套**完整的自助 Git 服务**装进 dsh——HTTP clone/push、网页端、issue、PR、wiki、发版、webhook、组织与团队。全部管理在 dsh 设置窗口一站式完成；**账户唯一来源 = user-management**，dsh 用户名密码即 Git 凭据，自动同名开户、密码自动跟随。
+dsh 插件 · Git 服务器：内嵌 [ts-gogs](https://github.com/weibaohui/ts-gogs)（Gogs 的 TypeScript 1:1 平替，源码级融合），把一套**完整的自助 Git 服务**装进 dsh——HTTP clone/push、网页端、issue、PR、wiki、发版、webhook、组织与团队。全部管理在 dsh 设置窗口一站式完成；**账户唯一来源 = user-management**，dsh 用户名密码即 Git 凭据，登录校验直接走 user-management 的 service。
 
 ## 这是干什么的
 
@@ -55,7 +55,7 @@ dsh plugin add github:weibaohui/dsh-git-server
 ## 快速上手
 
 1. 设置页勾选**启用 Git 服务器**，保存（默认 `127.0.0.1:3400`）；
-2. 点内嵌界面的**登录**：直接用 dsh 的用户名密码（user-management 账号自动同名开户、密码同步）——打开内嵌界面时通常已自动登录；
+2. 点内嵌界面的**登录**：直接用 dsh 的用户名密码（user-management service 校验）——打开内嵌界面时通常已自动登录；
 3. 新建仓库（设置页表单或网页端），然后照常开发：
 
 ```sh
@@ -81,8 +81,8 @@ cd drill-repo && git checkout -b feature && ... && git push origin feature
 
 dsh-git-server 不设独立账号体系。网页登录、git HTTP Basic、API Basic 的凭据都由 [user-management](https://github.com/weibaohui/user-management) 的用户库验证：
 
-- **同名开户**：UM 用户首次通过验证时，自动创建同名同角色的 Git 账号（UM admin → Git 管理员）；
-- **密码跟随**：Git 账号的存储密码在每次验证时与 UM 密码对齐——UM 侧改密后，下次登录自动跟随，网页/git/API 全场景一致；
+- **service 注入**：启动时自动定位 dsh profile 安装的 user-management store 模块并注入子进程，登录走 `store.checkLogin`（与 UM 网关同一代码路径）；外部建号/改密/禁用通过 users.json 指纹自动感知；
+- **影子账号**：UM 用户验证通过时自动维护同名本库账号（仓库所有权/令牌归属的载体，UM admin → Git 管理员）；**密码永不同步**——passwd 是随机不可用占位，任何登录路径都不校验它；
 - **注册关闭**：网页注册强制禁用，账号只能由 user-management 管理（UM 管理员在 dsh 的用户管理界面建号）；
 - **自动登录**：从 dsh 打开内嵌界面时按 dsh 会话注入对应身份，打开即已登录；
 - **回退保护**：user-management 用户库缺失/损坏时，回退到兜底管理员 `root`（设置页展示的密码），不会把人锁死在外面。

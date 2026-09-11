@@ -232,7 +232,7 @@ module.exports = {
     let umSessionsCache = null
     let umSessionsStamp = null
     function umUsernameForSession(token) {
-      const file = engine.umSessionsFilePath()
+      const file = path.join(engine.dshHome(), 'user-management', 'sessions.json')
       let stamp = null
       try { const st = fs.statSync(file); stamp = `${st.mtimeMs}:${st.size}` } catch { return null }
       if (stamp !== umSessionsStamp || !umSessionsCache) {
@@ -247,8 +247,9 @@ module.exports = {
     }
 
     function umAvailability(cfg) {
-      const file = engine.umUsersFilePath()
-      try { return fs.statSync(file) ? 'ok' : 'missing' } catch { return 'missing' }
+      const mod = engine.locateUmStore()
+      if (!mod) return 'missing'
+      try { fs.statSync(mod); return 'ok' } catch { return 'missing' }
     }
 
     function status() {

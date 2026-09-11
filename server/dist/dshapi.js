@@ -164,6 +164,55 @@ export function registerDshRoutes(m) {
             assignee: as ? as.name : '', author: poster ? poster.name : '',
         });
     });
+    // ── issue 列表（富字段 + 标签/里程碑/负责人过滤） ─────────────
+    m.get('/api/dsh/repos/:o/:r/issues', async (c) => {
+        const ar = authRepo(c);
+        if (!ar)
+            return;
+        const state = c.Query('state') || 'open';
+        const labelF = c.QueryInt('label');
+        const msF = c.QueryInt('milestone');
+        const asg = c.Query('assignee');
+        const where = ['i.repo_id = ?', 'i.is_pull = 0'];
+        const args = [ar.repo.id];
+        if (state === 'open' || state === 'closed') {
+            where.push('i.is_closed = ?');
+            args.push(state === 'closed' ? 1 : 0);
+        }
+        if (msF) {
+            where.push('i.milestone_id = ?');
+            args.push(msF);
+        }
+        if (asg) {
+            const au = db.getUserByUsername(asg);
+            where.push('i.assignee_id = ?');
+            args.push(au ? au.id : -1);
+        }
+        if (labelF) {
+            where.push('i.id IN (SELECT issue_id FROM issue_label WHERE label_id = ?)');
+            args.push(labelF);
+        }
+        const rows = db.db().prepare(`SELECT i.id, i."index" AS number, i.name AS title, i.is_closed, i.num_comments AS comments, i.updated_unix AS updated,
+              u.name AS user, ms.id AS msId, ms.name AS msTitle, au.name AS assignee
+       FROM issue i LEFT JOIN user u ON u.id = i.poster_id
+       LEFT JOIN milestone ms ON ms.id = i.milestone_id
+       LEFT JOIN user au ON au.id = i.assignee_id
+       WHERE ${where.join(' AND ')} ORDER BY i.updated_unix DESC LIMIT 200`).all(...args);
+        const labelMap = {};
+        if (rows.length) {
+            const marks = rows.map(() => '?').join(',');
+            const ls = db.db().prepare(`SELECT il.issue_id, l.id, l.name, l.color FROM issue_label il JOIN label l ON l.id = il.label_id WHERE il.issue_id IN (${marks})`).all(...rows.map((r) => r.id));
+            for (const x of ls)
+                (labelMap[x.issue_id] = labelMap[x.issue_id] || []).push({ id: x.id, name: x.name, color: x.color });
+        }
+        c.JSONSuccess(rows.map((r) => ({
+            number: r.number, title: r.title, state: r.is_closed ? 'closed' : 'open',
+            user: r.user, comments: r.comments, updatedAt: r.updated * 1000,
+            labels: labelMap[r.id] || [],
+            milestone: r.msId ? { id: r.msId, title: r.msTitle } : null,
+            assignee: r.assignee || '',
+        })));
+    });
     // ── 提交详情（diff） ─────────────────────────────────────────
     m.get('/api/dsh/repos/:o/:r/commits/:sha', async (c) => {
         const ar = authRepo(c);

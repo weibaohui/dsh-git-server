@@ -308,6 +308,43 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     c.JSONSuccess({ base, head, commits, diffStat: diff, diff: diffFull });
   });
 
+  // ── 文件历史（git log -- path） ───────────────────────────────
+  m.get('/api/dsh/repos/:o/:r/file-history', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const dir = ar.repo.RepoPath();
+    const ref = c.Query('ref') || ar.repo.default_branch || conf.defaultBranch;
+    const p = c.Query('path');
+    if (!p) { c.JSON(422, { error: 'path required' }); return; }
+    const out = (await git.git(dir, 'log', '--pretty=format:%h%x1f%s%x1f%an%x1f%ct', '--end-of-options', ref, '--', p))?.toString('utf8') ?? '';
+    const rows = out.split('\n').filter(Boolean).map((l) => {
+      const [sha, msg, author, date] = l.split('\x1f');
+      return { sha, msg, author, date: Number(date) * 1000 };
+    });
+    c.JSONSuccess({ commits: rows });
+  });
+
+  // ── 删除文件（网页删文件提交） ──────────────────────────────────
+  m.delete('/api/dsh/repos/:o/:r/files', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const body = await c.form();
+    const fileName = String(body.path ?? '').replace(/\\/g, '/').replace(/^\/+/, '').trim();
+    if (!fileName || fileName.includes('..')) { c.JSON(422, { error: '路径非法' }); return; }
+    const branch = String(body.branch ?? '') || ar.repo.default_branch || conf.defaultBranch;
+    const message = String(body.message ?? '') || `Delete ${fileName}`;
+    const dir = ar.repo.RepoPath();
+    const tmp = path.join(conf.appDataPath, 'tmp', 'delfile-' + Date.now());
+    fs.mkdirSync(tmp, { recursive: true });
+    try {
+      await git.git(process.cwd(), 'clone', '-q', '-b', branch, dir, tmp);
+      if (!fs.existsSync(path.join(tmp, fileName))) { c.JSON(404, { error: '文件不存在' }); return; }
+      await git.git(tmp, 'rm', '-q', '--', fileName);
+      await git.git(tmp, 'commit', '-q', `--author=${ar.user.name} <${ar.user.email}>`, '-m', message);
+      await git.git(tmp, 'push', '-q', 'origin', `HEAD:refs/heads/${branch}`);
+      c.JSONSuccess({ ok: true });
+    } catch (e: any) { c.JSON(500, { error: String(e?.message ?? e).slice(0, 200) }); }
+    finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
   // ── 网页新建/上传文件（新的文件 / 上传文件） ────────────────────
   m.post('/api/dsh/repos/:o/:r/files', async (c: Context) => {
     const ar = authRepo(c, true); if (!ar) return;

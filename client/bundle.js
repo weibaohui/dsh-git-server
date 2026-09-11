@@ -318,8 +318,12 @@ window.__ModuleLoader__.load({
       const [nf, setNf] = useState({ path: '', content: '', message: '' })
       const [busy, setBusy] = useState(false)
       const [msg, setMsg] = useState('')
+      const [editing, setEditing] = useState(false)
+      const [editText, setEditText] = useState('')
+      const [editMsg, setEditMsg] = useState('')
+      const [histMode, setHistMode] = useState(null)
       const load = useCallback((p) => {
-        setFile(null); setEntries(null); setErr(''); setBlameOn(false)
+        setFile(null); setEntries(null); setErr(''); setBlameOn(false); setEditing(false); setHistMode(null)
         api('GET', `/dsh/repos/${repo.owner}/${repo.name}/tree?ref=${encodeURIComponent(rev)}&path=${encodeURIComponent(p)}`)
           .then((d) => {
             const entries = (d.data && d.data.entries) || d.entries
@@ -407,21 +411,45 @@ window.__ModuleLoader__.load({
           : null,
         err ? h('div', { className: 'dgs-err' }, err) : null,
         file ? h('div', null,
-          h('div', { className: 'dgs-row', style: { margin: '8px 0' } },
-            h('button', { className: 'dgs-btn ghost', onClick: () => setFile(null) }, t('back')),
-            h('span', { style: { fontWeight: 600 } }, file.name),
-            h('span', { className: 'dgs-sub' }, file.size ? fmtSize(file.size) : ''),
-            h('span', { style: { flex: 1 } }),
-            file.text !== null ? h('a', { className: 'dgs-btn ghost', href: `/dsh-git-server/api/repos/${repo.owner}/${repo.name}/raw?ref=${encodeURIComponent(rev)}&path=${encodeURIComponent(path)}`, target: '_blank', rel: 'noreferrer' }, '原始文件') : null,
-            file.text !== null ? h('button', { className: 'dgs-btn ghost', onClick: () => {
-              try { navigator.clipboard.writeText(location.origin + '/r/' + repo.owner + '/' + repo.name + '/src/' + encodeURIComponent(rev) + '/' + encodeURIComponent(path)) } catch {}
-            } }, '永久链接') : null,
-            file.text !== null ? h('button', { className: 'dgs-btn ghost', onClick: () => setBlameOn(!blameOn) }, 'Blame') : null),
-          blameOn && file.text !== null
-            ? h(BlameView, { repo, rev, path, text: file.text })
-            : file.isMd
-              ? h('div', { className: 'dgs-md', style: { padding: '10px 0' }, dangerouslySetInnerHTML: { __html: file.html || '' } })
-              : h('pre', { className: 'dgs-file' }, file.text === null ? t('emptyFile') : file.text))
+          h('div', { className: 'dgs-row', style: { margin: '8px 0 10px' } },
+            h('button', { className: 'dgs-btn ghost', onClick: () => setFile(null) }, '⑂ ' + rev),
+            h('span', { className: 'dgs-sub' }, repo.name + ' /'),
+            h('span', { style: { fontWeight: 600 } }, file.name)),
+          h('div', { className: 'dgs-card', style: { padding: 0, overflow: 'hidden' } },
+            h('div', { className: 'dgs-row', style: { padding: '8px 12px', borderBottom: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-layer-2)' } },
+              h('span', { style: { fontWeight: 600, fontSize: 12.5 } }, '📄 ' + file.name + ' ' + (file.size ? fmtSize(file.size) : '')),
+              h('span', { style: { flex: 1 } }),
+              file.text !== null ? h('a', { className: 'dgs-sub', style: { cursor: 'pointer', marginRight: 12 }, onClick: () => {
+                try { navigator.clipboard.writeText(location.origin + '/r/' + repo.owner + '/' + repo.name + '/src/' + encodeURIComponent(rev) + '/' + encodeURIComponent(path)) } catch {}
+                setMsg('✓ 已复制永久链接'); setTimeout(() => setMsg(''), 1500)
+              } }, '永久链接') : null,
+              file.text !== null ? h('a', { className: 'dgs-sub', style: { cursor: 'pointer', marginRight: 12 }, onClick: () => setHistMode(histMode === 'history' ? null : 'history') }, '文件历史') : null,
+              file.text !== null ? h('a', { className: 'dgs-sub', style: { marginRight: 12 }, href: `/dsh-git-server/api/repos/${repo.owner}/${repo.name}/raw?ref=${encodeURIComponent(rev)}&path=${encodeURIComponent(path)}`, target: '_blank', rel: 'noreferrer' }, '原始文件') : null,
+              file.text !== null ? h('button', { className: 'dgs-btn ghost', style: { padding: '2px 8px' }, onClick: () => { setEditing(true); setEditText(file.text || '') } }, '✏️') : null,
+              file.text !== null ? h('button', { className: 'dgs-btn danger', style: { padding: '2px 8px' }, onClick: async () => {
+                if (!confirm('删除文件 ' + file.name + ' ？')) return
+                const d = await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/files`, { path, branch: rev })
+                if (d && d.ok) { setFile(null); load(path) } else setMsg((d && d.error) || '删除失败')
+              } }, '🗑️') : null,
+              file.text !== null ? h('button', { className: 'dgs-btn ghost', style: { padding: '2px 8px' }, onClick: () => setBlameOn(!blameOn) }, 'Blame') : null),
+            editing ? h('div', { style: { padding: 12 } },
+              h('textarea', { className: 'dgs-input', style: { minHeight: '40vh', fontFamily: 'ui-monospace,monospace' }, value: editText, onChange: (e) => setEditText(e.target.value) }),
+              h('div', { className: 'dgs-row', style: { marginTop: 8 } },
+                h('input', { className: 'dgs-input', placeholder: '提交信息（可选）', value: editMsg, onChange: (e) => setEditMsg(e.target.value) }),
+                h('span', { style: { flex: 1 } }),
+                h('button', { className: 'dgs-btn ghost', onClick: () => setEditing(false) }, '取消'),
+                h('button', { className: 'dgs-btn', disabled: busy, onClick: async () => {
+                  setBusy(true); setMsg('')
+                  const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/files`, { path, branch: rev, content: editText, message: editMsg, overwrite: true })
+                  setBusy(false)
+                  if (d && d.ok) { setEditing(false); load(path) } else setMsg((d && d.error) || '保存失败')
+                } }, '提交修改')))
+            : histMode === 'history' ? h(FileHistory, { repo, rev, path })
+            : blameOn && file.text !== null
+              ? h(BlameView, { repo, rev, path, text: file.text })
+              : file.isMd
+                ? h('div', { className: 'dgs-md', style: { padding: '14px 16px' }, dangerouslySetInnerHTML: { __html: file.html || '' } })
+                : h('pre', { className: 'dgs-file', style: { border: 'none', borderRadius: 0 } }, file.text === null ? t('emptyFile') : file.text)))
         : entries === null ? h('div', { className: 'dgs-empty' }, t('loading'))
         : renderDir(),
       )
@@ -928,6 +956,26 @@ window.__ModuleLoader__.load({
               bl.author ? `${bl.author} · ${(bl.sha || '').slice(0, 7)}` : ''),
             h('td', null, h('span', { style: { whiteSpace: 'pre-wrap', fontSize: 12.5 } }, code)))
         })))
+    }
+
+    // ── 文件历史 ───────────────────────────────────────────────────────────────
+
+    function FileHistory({ repo, rev, path }) {
+      const [list, setList] = useState(null)
+      useEffect(() => {
+        api('GET', `/dsh/repos/${repo.owner}/${repo.name}/file-history?ref=${encodeURIComponent(rev)}&path=${encodeURIComponent(path)}`)
+          .then((d) => setList(d.commits || []))
+      }, [repo.owner, repo.name, rev, path])
+      if (list === null) return h('div', { className: 'dgs-empty' }, '…')
+      return h('table', { className: 'dgs-table' },
+        h('tbody', null, list.length === 0
+          ? h('tr', null, h('td', { className: 'dgs-sub' }, '—'))
+          : list.map((cm) =>
+              h('tr', { key: cm.sha },
+                h('td', { className: 'dgs-sub', style: { width: 70 } }, cm.sha),
+                h('td', null, cm.msg || ''),
+                h('td', { className: 'dgs-sub', style: { textAlign: 'right', whiteSpace: 'nowrap' } },
+                  (cm.author || '') + ' · ' + timeAgo(cm.date))))))
     }
 
     // ── 标签管理 ───────────────────────────────────────────────────────────────

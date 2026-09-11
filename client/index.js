@@ -1418,6 +1418,7 @@ function PullDetail({ repo, idx, t, onBack }) {
   const [mergeStyle, setMergeStyle] = useState('merge')
   const [tab, setTab] = useState('conv')
   const [cmp, setCmp] = useState(null)
+  const [selCommit, setSelCommit] = useState(null)
   const [allLabels, setAllLabels] = useState([])
   const [allMs, setAllMs] = useState([])
   const [collabs, setCollabs] = useState([])
@@ -1500,14 +1501,17 @@ function PullDetail({ repo, idx, t, onBack }) {
             setText(''); setBusy(false)
             api('GET', `/repos/${repo.owner}/${repo.name}/issues/${idx}/comments`).then((d) => setComments(d.comments || []))
           } }, t('comment')))))
-  const commitsTab = cmp === null ? h('div', { className: 'dgs-empty' }, t('loading'))
+  const commitsTab = selCommit
+    ? h(CommitDetail, { repo, sha: selCommit, t, onBack: () => setSelCommit(null) })
+    : cmp === null ? h('div', { className: 'dgs-empty' }, t('loading'))
     : cmp.commits.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
     : h('table', { className: 'dgs-table' },
         h('tbody', null, cmp.commits.map((c) =>
-          h('tr', { key: c.sha },
+          h('tr', { key: c.sha, style: { cursor: 'pointer' }, onClick: () => setSelCommit(c.sha) },
             h('td', null, h('div', { style: { fontWeight: 500 } }, (c.message || '').split('\n')[0]),
               h('div', { className: 'dgs-sub' }, c.author)),
-            h('td', { className: 'dgs-sub', style: { textAlign: 'right' } }, (c.sha || '').slice(0, 10))))))
+            h('td', { className: 'dgs-sub', style: { textAlign: 'right' } },
+              h('a', { style: { color: 'var(--dsw-alias-state-business-primary)', cursor: 'pointer' } }, (c.sha || '').slice(0, 10)))))))
   const filesTab = cmp === null ? h('div', { className: 'dgs-empty' }, t('loading'))
     : cmp.diff ? h(DiffView, { patch: cmp.diff })
     : h('div', { className: 'dgs-empty' }, '无差异')

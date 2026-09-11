@@ -495,6 +495,29 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     }
   });
 
+  // ── 转移仓库所有权 / 清除 Wiki（危险区） ────────────────────────
+  m.post('/api/dsh/repos/:o/:r/transfer', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    if (ar.repo.OwnerName() !== ar.user.name && ar.user.is_admin !== 1) { c.JSON(403, { error: '仅仓库所有者可转移' }); return; }
+    const body = await c.form();
+    const orgName = String(body.org ?? '');
+    const owner = orgName ? db.getUserByUsername(orgName) : ar.user;
+    if (!owner) { c.JSON(404, { error: 'org not found' }); return; }
+    if (orgName && owner.type !== 1) { c.JSON(422, { error: '目标必须是组织' }); return; }
+    if (orgName) {
+      const mem = db.db().prepare('SELECT 1 FROM org_user WHERE org_id = ? AND uid = ? AND is_owner = 1').get(owner.id, ar.user.id);
+      if (!mem && ar.user.is_admin !== 1) { c.JSON(403, { error: '需要组织管理员' }); return; }
+    }
+    db.db().prepare('UPDATE repository SET owner_id = ? WHERE id = ?').run(owner.id, ar.repo.id);
+    c.JSONSuccess({ ok: true, owner: owner.name });
+  });
+  m.post('/api/dsh/repos/:o/:r/wiki-wipe', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const dir = ar.repo.WikiPath();
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+    c.JSONSuccess({ ok: true });
+  });
+
   // ── webhook CRUD ────────────────────────────────────────────────
   m.get('/api/dsh/repos/:o/:r/hooks', async (c: Context) => {
     const ar = authRepo(c); if (!ar) return;

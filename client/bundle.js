@@ -880,6 +880,18 @@ window.__ModuleLoader__.load({
       const header = h('div', { className: 'dgs-row', style: { margin: '8px 0 12px' } },
         h('span', { style: { fontWeight: 700 } }, list ? list.length + ' 个标签' : ''),
         h('span', { style: { flex: 1 } }),
+        h('button', { className: 'dgs-btn ghost', onClick: async () => {
+          const templates = [
+            { name: 'bug', color: '#e25444' }, { name: 'duplicate', color: '#b7b7b7' },
+            { name: 'enhancement', color: '#70c24a' }, { name: 'help wanted', color: '#c8c8ff' },
+            { name: 'invalid', color: '#fef2c0' }, { name: 'question', color: '#d876e3' },
+            { name: 'wontfix', color: '#ffffff' },
+          ]
+          for (const tpl of templates) {
+            await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/labels`, tpl)
+          }
+          reload()
+        } }, '加载标签模板'),
         h('button', { className: 'dgs-btn', onClick: startCreate }, '创建标签'))
       const formCard = (creating || editId !== null)
         ? h('div', { className: 'dgs-card', style: { marginBottom: 12 } },
@@ -1093,6 +1105,21 @@ window.__ModuleLoader__.load({
         hooks !== null && hooks.length === 0 ? h('div', { className: 'dgs-sub', style: { marginTop: 6 } }, '—') : null)
       const danger = h('div', { className: 'dgs-card', style: { marginTop: 12, borderColor: 'var(--dsw-alias-state-error-primary)55' } },
         h('div', { style: { fontWeight: 700, marginBottom: 8, color: 'var(--dsw-alias-state-error-primary)' } }, '危险区域'),
+        h('div', { className: 'dgs-row' },
+          h('span', { className: 'dgs-sub', style: { flex: 1 } }, '转移仓库所有权（组织/用户）'),
+          h('button', { className: 'dgs-btn ghost', onClick: async () => {
+            const org = prompt('转移到组织名（留空 = 当前用户）', '')
+            if (org === null) return
+            const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/transfer`, { org: org || undefined })
+            setMsg(d && d.ok ? '已转移' : (d && d.error) || '转移失败')
+          } }, '转移仓库')),
+        h('div', { className: 'dgs-row' },
+          h('span', { className: 'dgs-sub', style: { flex: 1 } }, '清除 Wiki 数据（删除所有 Wiki 页面）'),
+          h('button', { className: 'dgs-btn danger', onClick: async () => {
+            if (!confirm('确定清除该仓库的全部 Wiki 页面？')) return
+            const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/wiki-wipe`)
+            setMsg(d && d.ok ? '已清除' : (d && d.error) || '清除失败')
+          } }, '清除 Wiki 数据')),
         h('div', { className: 'dgs-row' },
           h('span', { className: 'dgs-sub', style: { flex: 1 } }, '删除此仓库（含所有工单/PR/Wiki）'),
           h('button', { className: 'dgs-btn danger', onClick: async () => {

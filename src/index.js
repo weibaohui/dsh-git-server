@@ -475,6 +475,7 @@ module.exports = {
               const cfg = engine.normalizeConfig(effective())
               const actor = umUsernameOf(req) // dsh 会话 → 操作者本人
               if (!actor) { sendJson(res, 401, { ok: false, error: '需要 dsh 登录' }); return }
+              const parts = rest.split('/').filter(Boolean) // dsh|repos,o,r,what...
 
               // GET /me — 本人 + 仓库列表
               if (req.method === 'GET' && (rest === '/me' || rest === '' || rest === '/')) {
@@ -508,7 +509,6 @@ module.exports = {
                 return
               }
               // GET /repos/:o/:r/tree|raw|commits|branches|issues...
-              const parts = rest.split('/').filter(Boolean) // repos,o,r,what...
               if (req.method === 'GET' && parts[0] === 'repos' && parts.length >= 4) {
                 const [, owner, repo, ...tail] = parts
                 const what = tail.join('/')
@@ -584,6 +584,30 @@ module.exports = {
                 sendJson(res, r.status === 201 ? 200 : r.status, r.status === 201 ? { ok: true } : { ok: false, error: errText(r) })
                 return
               }
+              // /dsh/* 透传：内核 dsh API（overview/pulls/wiki/releases/markdown）
+              if (parts && parts[0] === 'dsh') {
+                const kernelPath = '/api' + (rest.startsWith('/') ? rest : '/' + rest)
+                try {
+                  const token = await kernelTokenFor(cfg, actor)
+                  const headers = { Authorization: 'token ' + token }
+                  let bodyStr
+                  if (req.method !== 'GET' && req.method !== 'HEAD') {
+                    bodyStr = await readBody(req)
+                    headers['Content-Type'] = 'application/json'
+                  }
+                  const upstream = await fetch(`http://127.0.0.1:${cfg.port}${kernelPath}`, {
+                    method: req.method, headers, body: bodyStr,
+                  })
+                  const text = await upstream.text()
+                  let json = null
+                  try { json = JSON.parse(text) } catch { json = { ok: false, error: text.slice(0, 200) } }
+                  sendJson(res, upstream.status, json)
+                } catch (e) {
+                  sendJson(res, 502, { ok: false, error: String((e && e.message) || e) })
+                }
+                return
+              }
+
               // PATCH /repos/:o/:r/issues/:idx — 开/关工单
               if (req.method === 'PATCH' && parts[0] === 'repos' && parts[3] === 'issues' && parts.length === 5) {
                 const [, owner, repo, , idx] = parts

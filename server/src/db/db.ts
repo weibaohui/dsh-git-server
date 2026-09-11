@@ -569,6 +569,9 @@ export const AccessMode = { NONE: 0, READ: 1, WRITE: 2, ADMIN: 3, OWNER: 4 } as 
 
 export function accessMode(userID: number, repo: Repository): number {
   if (userID <= 0) return repo.is_private ? AccessMode.NONE : AccessMode.READ;
+  // 站点管理员对任何仓库都有管理权（gogs 语义）
+  const siteAdmin = db().prepare('SELECT 1 FROM user WHERE id = ? AND is_admin = 1').get(userID);
+  if (siteAdmin) return AccessMode.ADMIN;
   if (repo.owner_id === userID) return AccessMode.OWNER;
   if (repo.owner && repo.owner.type === 1) {
     // organization ownership

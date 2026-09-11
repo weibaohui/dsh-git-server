@@ -1494,7 +1494,8 @@ export async function DeleteWikiPagePost(c) {
     c.flash.Success(c.Tr('repo.wiki.page_deleted'));
     c.Redirect(repoLink(c) + '/wiki/');
 }
-async function writeWikiPage(repo, title, content, doer, oldTitle, isDelete = false) {
+/** dsh API 复用入口（server/src/dshapi.ts 经此导出使用） */
+export async function writeWikiPage(repo, title, content, doer, oldTitle, isDelete = false) {
     const wikiDir = repo.WikiPath();
     await svc.initWiki(wikiDir);
     const tmpDir = path.join(conf.appDataPath, 'tmp', 'wiki-' + Date.now());
@@ -1539,7 +1540,7 @@ async function writeWikiPage(repo, title, content, doer, oldTitle, isDelete = fa
 }
 // ---------------------------------------------------------------- pulls
 /** gogs testPatch: apply the PR patch onto a fresh base-branch copy to judge mergeability. */
-async function testPullRequestMergeable(repo, pr) {
+export async function testPullRequestMergeable(repo, pr) {
     const patchFile = path.join(conf.appDataPath, 'patches', String(repo.id), `${pr.index}.patch`);
     if (!fs.existsSync(patchFile))
         return pr.status ?? 0;

@@ -130,6 +130,8 @@ export async function startServer() {
     router = new Router();
     registerWebRoutes(router);
     registerAPIRoutes(router);
+    const { registerDshRoutes } = await import('./dshapi.js');
+    registerDshRoutes(router);
     const server = http.createServer(async (req, res) => {
         try {
             await handleRequest(req, res);

@@ -104,6 +104,8 @@ function ensureStyles() {
 .dgs-input{flex:1;min-width:160px;padding:7px 11px;font-size:13px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;outline:none}
 .dgs-input:focus{border-color:var(--dsw-alias-state-business-primary)}
 textarea.dgs-input{min-height:72px;resize:vertical}
+/* 卡片直属的输入控件不在 flex 行内，flex:1 失效——显式撑满 */
+textarea.dgs-input,.dgs-card>.dgs-input{width:100%;box-sizing:border-box;flex:none}
 .dgs-tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--dsw-alias-border-l2);margin-bottom:14px}
 .dgs-tab{cursor:pointer;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;font-weight:500;padding:8px 14px;border-radius:8px 8px 0 0;border-bottom:2px solid transparent}
 .dgs-tab.active{color:var(--dsw-alias-state-business-primary);border-bottom-color:var(--dsw-alias-state-business-primary)}

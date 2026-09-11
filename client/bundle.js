@@ -222,8 +222,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dgs-row', style: { gap: 14 } },
             h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => setTab('commits') }, '⎇ ' + (ov.numCommits || 0) + ' 提交'),
             h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => setTab('branches') }, '⑂ ' + (ov.numBranches || 0) + ' 分支'),
-            h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => setTab('tags') }, '◎ ' + (ov.numTags || 0) + ' 标签'),
-            h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => setTab('releases') }, '⌘ ' + (ov.numReleases || 0) + ' 发版'),
+            h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => setTab('releases') }, '◎ ' + (ov.numTags || 0) + ' 标签 · ⌘ ' + (ov.numReleases || 0) + ' 发版'),
             h('span', { className: 'dgs-sub' }, '★ ' + (ov.numStars || 0)),
             h('span', { className: 'dgs-sub' }, '⑂ ' + (ov.numForks || 0)),
             h('span', { className: 'dgs-sub' }, '👁 ' + (ov.numWatches || 0))),
@@ -234,12 +233,11 @@ window.__ModuleLoader__.load({
               setCopied(true); setTimeout(() => setCopied(false), 1600)
             } }, copied ? t('copied') : t('copy'))) : null) : null,
         h('div', { className: 'dgs-tabs' },
-          ['files', 'commits', 'branches', 'tags', 'issues', 'pulls', 'wiki', 'releases', 'settings'].map((k) =>
+          ['files', 'commits', 'branches', 'issues', 'pulls', 'wiki', 'releases', 'settings'].map((k) =>
             h('button', { key: k, className: 'dgs-tab' + (tab === k ? ' active' : ''), onClick: () => setTab(k) }, t(k)))),
         tab === 'files' && h(FileTree, { repo, rev: rev || 'master', t, overview: ov, onOverview: setOv }),
         tab === 'commits' && h(Commits, { repo, rev: rev || 'master', t }),
         tab === 'branches' && h(Branches, { repo, t }),
-        tab === 'tags' && h(Tags, { repo, ov, t }),
         tab === 'issues' && h(IssuesArea, { repo, t }),
         tab === 'pulls' && h(Pulls, { repo, t }),
         tab === 'wiki' && h(WikiView, { repo, t }),
@@ -1016,9 +1014,18 @@ window.__ModuleLoader__.load({
       const [editForm, setEditForm] = useState({ title: '', note: '' })
       const [busy, setBusy] = useState(false)
       const [msg, setMsg] = useState('')
+      const [branches, setBranches] = useState([])
+      const [plainTags, setPlainTags] = useState(null)
       const reload = useCallback(() => {
         setList(null)
-        api('GET', `/dsh/repos/${repo.owner}/${repo.name}/releases`).then((d) => setList(Array.isArray(d) ? d : (d.data || [])))
+        api('GET', `/dsh/repos/${repo.owner}/${repo.name}/releases`).then((d) => {
+          setList(Array.isArray(d) ? d : (d.data || []))
+          api('GET', `/dsh/repos/${repo.owner}/${repo.name}/overview`).then((ov) => {
+            setBranches(ov.branches || [])
+            const released = new Set((Array.isArray(d) ? d : (d.data || [])).map((r) => r.tag))
+            setPlainTags((ov.tags || []).filter((tg) => !released.has(tg)))
+          })
+        })
       }, [repo.owner, repo.name])
       useEffect(reload, [reload])
       return h('div', null,
@@ -1028,10 +1035,17 @@ window.__ModuleLoader__.load({
           h('button', { className: 'dgs-btn', onClick: () => setCreating(!creating) }, '+ ' + t('newRelease'))),
         msg ? h('div', { className: 'dgs-err' }, msg) : null,
         creating ? h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
-          h('div', { className: 'dgs-row', style: { marginBottom: 8 } },
-            h('input', { className: 'dgs-input', style: { maxWidth: 160 }, placeholder: 'v0.1.0', value: form.tag, onChange: (e) => setForm({ ...form, tag: e.target.value }) }),
-            h('input', { className: 'dgs-input', placeholder: t('relTitle'), value: form.title, onChange: (e) => setForm({ ...form, title: e.target.value }) }),
-            h('input', { className: 'dgs-input', style: { maxWidth: 160 }, placeholder: t('target'), value: form.target, onChange: (e) => setForm({ ...form, target: e.target.value }) })),
+          h('div', { className: 'dgs-row' },
+            h('span', { style: { fontWeight: 700 } }, '发布新版本'),
+            h('span', { style: { flex: 1 } }),
+            h('button', { className: 'dgs-btn ghost', onClick: () => setCreating(false) }, t('back'))),
+          h('div', { className: 'dgs-row', style: { margin: '8px 0 0' } },
+            h('input', { className: 'dgs-input', style: { maxWidth: 180 }, placeholder: '标签名（如 v0.1.0）', value: form.tag, onChange: (e) => setForm({ ...form, tag: e.target.value }) }),
+            h('select', { className: 'dgs-input', style: { maxWidth: 180, flex: 'none', width: 'auto' }, value: form.target, onChange: (e) => setForm({ ...form, target: e.target.value }) },
+              h('option', { value: '' }, '基于分支：默认分支'),
+              branches.map((b) => h('option', { key: b, value: b }, b))),
+            h('input', { className: 'dgs-input', placeholder: t('relTitle'), value: form.title, onChange: (e) => setForm({ ...form, title: e.target.value }) })),
+          h('div', { className: 'dgs-sub', style: { margin: '6px 0 0' } }, '标签不存在时会基于所选分支自动创建 git 标签'),
           h('textarea', { className: 'dgs-input', placeholder: t('relNote'), value: form.note, onChange: (e) => setForm({ ...form, note: e.target.value }) }),
           h('div', { className: 'dgs-row', style: { marginTop: 8 } },
             h('button', { className: 'dgs-btn', disabled: busy || !form.tag.trim(),
@@ -1072,7 +1086,15 @@ window.__ModuleLoader__.load({
                     await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/releases/${r.id}`)
                     reload()
                   } }, t('delete'))),
-                r.noteHtml ? h('div', { className: 'dgs-md', style: { marginTop: 8 }, dangerouslySetInnerHTML: { __html: r.noteHtml } }) : null)))
+                r.noteHtml ? h('div', { className: 'dgs-md', style: { marginTop: 8 }, dangerouslySetInnerHTML: { __html: r.noteHtml } }) : null)),
+        (plainTags && plainTags.length > 0) ? h('div', { style: { marginTop: 16 } },
+          h('div', { style: { fontWeight: 700, margin: '4px 0 8px' } }, '未发版的标签'),
+          plainTags.map((tg) => h('div', { key: tg, className: 'dgs-issue' },
+            h('span', { className: 'dgs-badge' }, tg),
+            h('span', { style: { flex: 1 } }),
+            h('button', { className: 'dgs-btn ghost', onClick: () => {
+              setCreating(true); setEditId(null); setForm({ tag: tg, title: '', note: '', target: '' })
+            } }, '+ 为此标签创建发版')))) : null)
     }
 
     // ── 探索 ───────────────────────────────────────────────────────────────────

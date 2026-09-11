@@ -1344,65 +1344,79 @@ function PullDetail({ repo, idx, t, onBack }) {
   const [mergeStyle, setMergeStyle] = useState('merge')
   const [tab, setTab] = useState('conv')
   const [cmp, setCmp] = useState(null)
+  const [allLabels, setAllLabels] = useState([])
+  const [allMs, setAllMs] = useState([])
+  const [collabs, setCollabs] = useState([])
+  const [mergeMsg, setMergeMsg] = useState('')
   useEffect(() => {
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/pulls`).then((d) => {
       const all = Array.isArray(d) ? d : (d.data || d.pulls || [])
-      setPr(all.find((x) => x.index === idx) || null)
+      const found = all.find((x) => x.index === idx) || null
+      setPr(found)
+      if (found) api('GET', `/dsh/repos/${repo.owner}/${repo.name}/compare?base=${encodeURIComponent(found.base)}&head=${encodeURIComponent(found.head)}`).then((c) => c && c.commits && setCmp(c))
     })
     api('GET', `/repos/${repo.owner}/${repo.name}/issues/${idx}/comments`).then((d) => setComments(d.comments || []))
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/labels`).then((d) => setAllLabels(Array.isArray(d) ? d : []))
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/milestones`).then((d) => setAllMs(Array.isArray(d) ? d : []))
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/collaborators`).then((d) => setCollabs(Array.isArray(d) ? d : []))
   }, [repo.owner, repo.name, idx])
-  useEffect(() => {
-    if (!pr) return
-    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/compare?base=${encodeURIComponent(pr.base)}&head=${encodeURIComponent(pr.head)}`)
-      .then((d) => d && d.commits && setCmp(d))
-  }, [pr, repo.owner, repo.name])
+
   if (pr === null) return h('div', { className: 'dgs-empty' }, t('loading'))
-  return h('div', null,
-    h('div', { className: 'dgs-row', style: { marginBottom: 10 } },
-      h('button', { className: 'dgs-btn ghost', onClick: onBack }, t('back')),
-      h('span', { style: { fontWeight: 600 } }, `#${idx} ${pr.title}`),
-      h('span', { className: 'dgs-sub' }, `${pr.head} ${t('headToBase')} ${pr.base}`),
-      h('span', { style: { flex: 1 } }),
-      pr.state === 'open' ? h('div', { className: 'dgs-row', style: { gap: 6 } },
-        h('select', { className: 'dgs-input', style: { maxWidth: 120, flex: 'none', width: 'auto', padding: '5px 8px' }, value: mergeStyle, onChange: (e) => setMergeStyle(e.target.value) },
-          [['merge', '合并提交'], ['squash', '压缩合并'], ['rebase', '变基合并']].map(([v, label]) => h('option', { key: v, value: v }, label))),
-        h('button', { className: 'dgs-btn', disabled: busy,
-          onClick: async () => {
-            if (!confirm(t('mergeConfirm'))) return
-            setBusy(true); setMsg('')
-            const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/pulls/${idx}/merge`, { style: mergeStyle })
-            setBusy(false)
-            d.ok !== false && !d.error ? onBack() : setMsg(d.error || 'merge failed')
-          } }, '⇆ ' + t('merge')),
-        h('button', { className: 'dgs-btn danger', disabled: busy,
-          onClick: async () => {
-            if (!confirm('不合并直接关闭此 PR？')) return
-            setBusy(true)
-            await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/pulls/${idx}/close`)
-            setBusy(false); onBack()
-          } }, '关闭')) : h('span', { className: 'dgs-badge' }, t('prMerged'))),
-    msg ? h('div', { className: 'dgs-err' }, msg) : null,
-    h('div', { className: 'dgs-subtabs', style: { margin: '8px 0 12px' } },
-      [['conv', '对话'], ['commits', '提交'], ['files', '文件变动']].map(([k, label]) =>
-        h('button', { key: k, className: 'dgs-subtab' + (tab === k ? ' active' : ''), onClick: () => setTab(k) }, label))),
-    tab === 'commits' ? h('div', null,
-      cmp === null ? h('div', { className: 'dgs-empty' }, t('loading'))
-        : cmp.commits.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
-        : h('table', { className: 'dgs-table' },
-            h('tbody', null, cmp.commits.map((c) =>
-              h('tr', { key: c.sha },
-                h('td', null, h('div', { style: { fontWeight: 500 } }, (c.message || '').split('\n')[0]),
-                  h('div', { className: 'dgs-sub' }, c.author)),
-                h('td', { className: 'dgs-sub', style: { textAlign: 'right' } }, (c.sha || '').slice(0, 10)))))))
-    : tab === 'files' ? h('div', null,
-        cmp === null ? h('div', { className: 'dgs-empty' }, t('loading'))
-          : cmp.diff ? h(DiffView, { patch: cmp.diff })
-          : h('div', { className: 'dgs-empty' }, '无差异'))
-    : (comments || []).map((c) =>
+  const headRef = (pr.headUser || repo.owner) + '/' + pr.head
+  const baseRef = repo.owner + '/' + pr.base
+  const side = h('div', null,
+    h('div', { className: 'dgs-side-block' },
+      h('div', { className: 'dgs-side-title' }, '标签 ⚙'),
+      allLabels.length === 0 ? h('div', { className: 'dgs-sub' }, '未选择标签') : null,
+      allLabels.map((l) => h('div', { key: l.id, className: 'dgs-sub', style: { margin: '4px 0' } },
+        h('span', { className: 'dgs-badge', style: { background: (l.color || '#70c24a') + '33' } }, l.name)))),
+    h('div', { className: 'dgs-side-block' },
+      h('div', { className: 'dgs-side-title' }, '里程碑 ⚙'),
+      allMs.length === 0 ? h('div', { className: 'dgs-sub' }, '未选择里程碑') : null,
+      allMs.map((m) => h('div', { key: m.id, className: 'dgs-sub', style: { margin: '4px 0' } }, '◆ ' + m.title))),
+    h('div', { className: 'dgs-side-block' },
+      h('div', { className: 'dgs-side-title' }, '指派成员 ⚙'),
+      h('div', { className: 'dgs-sub' }, pr.assignee || '未指派成员')),
+    h('div', { className: 'dgs-side-block' },
+      h('div', { className: 'dgs-side-title' }, '1 名参与者'),
+      h('div', { className: 'dgs-sub' }, pr.author || '')))
+  const mergeBox = pr.state === 'open' ? h('div', { className: 'dgs-card', style: { margin: '10px 0', borderColor: 'var(--dsw-alias-state-success-primary)55' } },
+    h('div', { className: 'dgs-row', style: { gap: 8 } },
+      h('span', { style: { color: 'var(--dsw-alias-state-success-primary)', fontSize: 16 } }, '⑂'),
+      h('span', { style: { color: 'var(--dsw-alias-state-success-primary)', fontSize: 13 } }, '该合并请求可以进行自动合并操作。')),
+    h('div', { style: { margin: '10px 0' } },
+      h('label', { className: 'dgs-sub', style: { display: 'flex', gap: 6, alignItems: 'center', margin: '4px 0' } },
+        h('input', { type: 'radio', name: 'mergeStyle', checked: mergeStyle === 'merge', onChange: () => setMergeStyle('merge') }), '创建一个新的合并提交'),
+      h('label', { className: 'dgs-sub', style: { display: 'flex', gap: 6, alignItems: 'center', margin: '4px 0' } },
+        h('input', { type: 'radio', name: 'mergeStyle', checked: mergeStyle === 'squash', onChange: () => setMergeStyle('squash') }), '压缩提交并合并'),
+      h('label', { className: 'dgs-sub', style: { display: 'flex', gap: 6, alignItems: 'center', margin: '4px 0' } },
+        h('input', { type: 'radio', name: 'mergeStyle', checked: mergeStyle === 'rebase', onChange: () => setMergeStyle('rebase') }), '变基并合并')),
+    h('div', { className: 'dgs-sub', style: { margin: '6px 0' } }, '提交说明:'),
+    h('textarea', { className: 'dgs-input', style: { minHeight: 60 }, value: mergeMsg, onChange: (e) => setMergeMsg(e.target.value) }),
+    h('div', { className: 'dgs-row', style: { marginTop: 10 } },
+      h('button', { className: 'dgs-btn', disabled: busy,
+        onClick: async () => {
+          if (!confirm(t('mergeConfirm'))) return
+          setBusy(true); setMsg('')
+          const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/pulls/${idx}/merge`, { style: mergeStyle, message: mergeMsg })
+          setBusy(false)
+          d.ok !== false && !d.error ? onBack() : setMsg(d.error || 'merge failed')
+        } }, '⇆ 合并请求'),
+      h('button', { className: 'dgs-btn danger', disabled: busy,
+        onClick: async () => {
+          if (!confirm('不合并直接关闭此 PR？')) return
+          setBusy(true)
+          await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/pulls/${idx}/close`)
+          setBusy(false); onBack()
+        } }, '关闭')))
+    : h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
+        h('span', { className: 'dgs-badge' }, pr.state === 'merged' ? '已合并' : '已关闭'))
+  const conv = h('div', null,
+    (comments || []).map((c) =>
       h('div', { key: c.id, className: 'dgs-comment' },
-        h('div', { className: 'dgs-sub', style: { marginBottom: 4 } }, `${c.user || ''} · ${fmtDate(c.created)}`),
-        h('div', { style: { whiteSpace: 'pre-wrap' } }, c.body))),
-    h('div', { className: 'dgs-card' },
+        h('div', { className: 'dgs-sub', style: { marginBottom: 4 } }, `${c.user || ''} 评论于 ${fmtDate(c.created)}`),
+        h('div', { style: { whiteSpace: 'pre-wrap' } }, c.body || '这个人很懒，什么都没留下。'))),
+    h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
       h('textarea', { className: 'dgs-input', placeholder: t('commentPlaceholder'), value: text, onChange: (e) => setText(e.target.value) }),
       h('div', { className: 'dgs-row', style: { marginTop: 8 } },
         h('button', { className: 'dgs-btn', disabled: busy || !text.trim(),
@@ -1412,9 +1426,39 @@ function PullDetail({ repo, idx, t, onBack }) {
             setText(''); setBusy(false)
             api('GET', `/repos/${repo.owner}/${repo.name}/issues/${idx}/comments`).then((d) => setComments(d.comments || []))
           } }, t('comment')))))
+  const commitsTab = cmp === null ? h('div', { className: 'dgs-empty' }, t('loading'))
+    : cmp.commits.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
+    : h('table', { className: 'dgs-table' },
+        h('tbody', null, cmp.commits.map((c) =>
+          h('tr', { key: c.sha },
+            h('td', null, h('div', { style: { fontWeight: 500 } }, (c.message || '').split('\n')[0]),
+              h('div', { className: 'dgs-sub' }, c.author)),
+            h('td', { className: 'dgs-sub', style: { textAlign: 'right' } }, (c.sha || '').slice(0, 10))))))
+  const filesTab = cmp === null ? h('div', { className: 'dgs-empty' }, t('loading'))
+    : cmp.diff ? h(DiffView, { patch: cmp.diff })
+    : h('div', { className: 'dgs-empty' }, '无差异')
+  const tabBtn = (k, label, count) => h('button', { key: k, className: 'dgs-subtab' + (tab === k ? ' active' : ''), onClick: () => setTab(k) },
+    label + (count !== undefined && count !== null ? ' ' + count : ''))
+  return h('div', null,
+    h('div', { className: 'dgs-row', style: { marginBottom: 6 } },
+      h('button', { className: 'dgs-btn ghost', onClick: onBack }, t('back')),
+      h('span', { className: 'dgs-h1', style: { fontSize: 17 } }, '#' + idx + ' ' + pr.title),
+      h('span', { style: { flex: 1 } }),
+      pr.state === 'open' ? h('button', { className: 'dgs-btn ghost', onClick: () => {} }, '编辑') : null),
+    h('div', { className: 'dgs-row', style: { marginBottom: 10 } },
+      h('span', { className: 'dgs-issue-num' }, pr.state === 'open' ? '开启中' : pr.state === 'merged' ? '已合并' : '已关闭'),
+      h('span', { className: 'dgs-sub' },
+        (pr.author || '') + ' 请求将 ' + (cmp ? cmp.commits.length : 'N') + ' 次代码提交从 ' + headRef + ' 合并至 ' + baseRef)),
+    msg ? h('div', { className: 'dgs-err' }, msg) : null,
+    h('div', { className: 'dgs-subtabs', style: { margin: '8px 0 12px' } },
+      tabBtn('conv', '对话内容', (comments || []).length),
+      tabBtn('commits', '代码提交', cmp ? cmp.commits.length : ''),
+      tabBtn('files', '文件变动', cmp && cmp.diff ? '1' : '0')),
+    h('div', { className: 'dgs-issue-layout' },
+      h('div', { className: 'dgs-issue-main' },
+        tab === 'conv' ? h('div', null, conv, mergeBox) : tab === 'commits' ? commitsTab : filesTab),
+      h('div', { className: 'dgs-issue-side' }, side)))
 }
-
-// ── Wiki（列表 + 查看[渲染] + 编辑/新建） ──────────────────────────────────
 
 function WikiView({ repo, t }) {
   const [pages, setPages] = useState(null)

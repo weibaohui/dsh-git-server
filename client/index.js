@@ -28,7 +28,7 @@ const { createElement: h, useState, useEffect, useCallback } = __React
 
 const NS = 'dshGitServer'
 const ZH = {
-  nav: 'Git', title: 'Git 服务器',
+  nav: 'Git', title: '代码仓库',
   myRepos: '我的仓库', newRepo: '新建仓库', repoName: '仓库名', private: '私有',
   create: '创建', delete: '删除', deleteConfirm: '确定删除仓库', open: '打开',
   clone: '克隆地址', copy: '复制', copied: '已复制',
@@ -47,10 +47,10 @@ const ZH = {
   noReleases: '暂无发版', noWiki: '暂无页面——创建第一个', deletePage: '删除页面',
   prMerged: '已合并', prOpen: '开启中', prClosed: '已关闭',
   labels: '标签管理', milestones: '里程碑', settings: '设置',
-  hint: 'dsh 内嵌 Git 服务 · 账号即 dsh 账号 · git clone 用 dsh 用户名密码',
+  hint: 'dsh 账号即 Git 凭据',
 }
 const EN = {
-  nav: 'Git', title: 'Git Server',
+  nav: 'Git', title: 'Repositories',
   myRepos: 'My repositories', newRepo: 'New repository', repoName: 'Repository name', private: 'Private',
   create: 'Create', delete: 'Delete', deleteConfirm: 'Delete repository', open: 'Open',
   clone: 'Clone URL', copy: 'Copy', copied: 'Copied',
@@ -69,7 +69,7 @@ const EN = {
   noReleases: 'No releases', noWiki: 'No pages yet — create one', deletePage: 'Delete page',
   prMerged: 'Merged', prOpen: 'Open', prClosed: 'Closed',
   labels: 'Labels', milestones: 'Milestones', settings: 'Settings',
-  hint: 'Git service inside dsh · your dsh account is your git credential',
+  hint: 'Your dsh account is your Git credential',
 }
 
 // ── styles（dsw token 原生） ───────────────────────────────────────────────
@@ -81,13 +81,12 @@ function ensureStyles() {
   holder.style.display = 'none'
   holder.innerHTML = `<style>
 .dgs-page{position:fixed;inset:0;z-index:2147483000;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);font-size:14px}
-.dgs-head{display:flex;align-items:center;gap:12px;padding:10px 18px;border-bottom:1px solid var(--dsw-alias-border-l2);flex:none}
-.dgs-mark{width:20px;height:20px;border-radius:6px;background:linear-gradient(135deg,var(--dsw-alias-state-business-primary),#679efe);flex:none}
+.dgs-head{display:flex;align-items:center;gap:12px;padding:12px 28px;border-bottom:1px solid var(--dsw-alias-border-l2);flex:none}
 .dgs-h1{font-size:16px;font-weight:700;margin:0}
 .dgs-hint{font-size:12px;color:var(--dsw-alias-label-tertiary)}
 .dgs-close{margin-left:auto;cursor:pointer;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:18px;padding:4px 8px;border-radius:8px}
 .dgs-close:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.dgs-body{flex:1;overflow:auto;padding:18px;max-width:1100px;width:100%;margin:0 auto}
+.dgs-body{flex:1;overflow:auto;padding:20px 28px 32px;max-width:1100px;width:100%;margin:0 auto}
 .dgs-card{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:14px 16px;margin-bottom:10px}
 .dgs-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .dgs-repo{cursor:pointer;transition:border-color .12s}
@@ -1069,7 +1068,6 @@ function GitPage({ onClose, t }) {
   const navItems = [['repos', t('myRepos')], ['explore', '探索'], ['orgs', '组织'], ['admin', '管理']]
   return h('div', { className: 'dgs-page' },
     h('div', { className: 'dgs-head' },
-      h('div', { className: 'dgs-mark' }),
       h('div', null,
         h('div', { className: 'dgs-h1' }, t('title')),
         h('div', { className: 'dgs-hint' }, t('hint'))),

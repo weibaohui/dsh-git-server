@@ -207,14 +207,17 @@ function ensureDeps({ logger = () => {} } = {}) {
   return depsInstallInFlight
 }
 
-/** 清理本插件的历史孤儿子进程（命令行含本插件 server 入口路径的才杀）。 */
-function killOrphanChildren(logger) {
+/** 按实例标签清理本数据目录的历史孤儿子进程（不同实例互不影响）。 */
+function killOrphanChildren(tag, logger) {
   try {
     const marker = path.join(SERVER_DIR, 'dist', 'index.js')
+    const needle = tag ? `--dsh-instance=${tag}` : null
+    if (!needle) return
     const out = require('node:child_process')
       .execSync(`ps ax -o pid=,command= | grep -F '${marker}' | grep -v grep || true`, { shell: '/bin/bash' })
       .toString()
     for (const line of out.split('\n')) {
+      if (!line.includes(needle)) continue
       const pid = parseInt(line.trim().split(/\s+/)[0], 10)
       if (pid && pid !== process.pid) {
         try { process.kill(pid, 'SIGTERM'); logger(`清理历史孤儿子进程 pid=${pid}`) } catch {}
@@ -223,15 +226,40 @@ function killOrphanChildren(logger) {
   } catch {}
 }
 
+/** 实例标签：每个数据目录一个持久随机标签（<dataDir>/custom/instance-tag）。 */
+function ensureInstanceTag(cfg) {
+  const file = path.join(cfg.dataDir, 'custom', 'instance-tag')
+  try { return fs.readFileSync(file, 'utf8').trim() } catch {}
+  const tag = crypto.randomBytes(8).toString('hex')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, tag + '\n', { mode: 0o600 })
+  return tag
+}
+
 /**
  * 启动 ts-gogs 子进程。返回句柄 { pid, stop() }。
  * 就绪前抛错（带 stderr 尾部）；就绪判定 = GET / 返回任意状态（TS 服务
  * 起来后即使 404/302 也代表监听器在线）。
  */
-async function start(cfg, { logger = () => {}, onExit } = {}) {
-  killOrphanChildren(logger)
+async function start(cfg, options = {}) {
+  const logger = options.logger || (() => {})
+  const instanceTag = ensureInstanceTag(cfg)
+  killOrphanChildren(instanceTag, logger)
   await new Promise((r) => setTimeout(r, 600)) // 等端口释放
   await ensureDeps({ logger })
+  // 偶发：子进程刚起来就收到未知来源的信号——按标签清理后重试一次
+  try {
+    return await spawnAndReady(cfg, { ...options, instanceTag })
+  } catch (e) {
+    if (!/进程退出|就绪探测超时/.test(String((e && e.message) || e))) throw e
+    logger('Git 服务器启动中断，清理后重试一次…')
+    killOrphanChildren(instanceTag, logger)
+    await new Promise((r) => setTimeout(r, 1200))
+    return spawnAndReady(cfg, { ...options, instanceTag })
+  }
+}
+
+async function spawnAndReady(cfg, { logger = () => {}, onExit, instanceTag } = {}) {
   const appIni = writeAppIni(cfg)
   const entry = path.join(SERVER_DIR, 'dist', 'index.js')
   if (!fs.existsSync(entry)) throw new Error(`vendor/ts-gogs 构建产物缺失: ${entry}`)
@@ -245,7 +273,8 @@ async function start(cfg, { logger = () => {}, onExit } = {}) {
   // 账户单一来源：始终对接 user-management 用户库（桥内部处理缺失回退）
   env.DSH_UM_USERS_FILE = process.env.DSH_UM_USERS_FILE || path.join(dshHome(), 'user-management', 'users.json')
 
-  const child = spawn(process.execPath, [entry], { cwd: SERVER_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] })
+  const spawnArgs = instanceTag ? [entry, `--dsh-instance=${instanceTag}`] : [entry]
+  const child = spawn(process.execPath, spawnArgs, { cwd: SERVER_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] })
   let stderrTail = ''
   child.stderr.on('data', (d) => {
     stderrTail = (stderrTail + d.toString()).slice(-4000)

@@ -518,6 +518,39 @@ export function registerDshRoutes(m) {
             c.JSON(422, { error: String(e?.message ?? e).slice(0, 120) });
         }
     });
+    m.patch('/api/dsh/orgs/:name', async (c) => {
+        const header = String(c.req.headers.authorization ?? '');
+        const token = /^token (.+)$/.exec(header)?.[1] ?? '';
+        const user = token ? authenticateUserByToken(token) : null;
+        if (!user) {
+            c.JSON(401, { error: 'unauthorized' });
+            return;
+        }
+        const o = db.getUserByUsername(c.Params(':name'));
+        if (!o || o.type !== 1) {
+            c.JSON(404, { error: 'org not found' });
+            return;
+        }
+        const ownerRow = db.db().prepare('SELECT is_owner FROM org_user WHERE org_id = ? AND uid = ?').get(o.id, user.id);
+        if ((!ownerRow || !ownerRow.is_owner) && user.is_admin !== 1) {
+            c.JSON(403, { error: 'forbidden' });
+            return;
+        }
+        const body = await c.form();
+        const sets = [];
+        const args = [];
+        if (body.fullName !== undefined) {
+            sets.push('full_name = ?');
+            args.push(String(body.fullName));
+        }
+        if (body.description !== undefined) {
+            sets.push('description = ?');
+            args.push(String(body.description));
+        }
+        if (sets.length)
+            db.db().prepare(`UPDATE user SET ${sets.join(', ')} WHERE id = ? AND type = 1`).run(...args, o.id);
+        c.JSONSuccess({ ok: true });
+    });
     // ── 探索：仓库/用户搜索 ───────────────────────────────────────
     m.get('/api/dsh/explore/repos', async (c) => {
         const q = '%' + c.Query('q').toLowerCase() + '%';

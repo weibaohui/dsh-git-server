@@ -892,16 +892,25 @@ function Orgs({ t }) {
             h('a', { className: 'dgs-name', href: '#/org/' + (o.name || o) }, o.name || o))))
 }
 
-function OrgView({ name, t, kernelUrl }) {
+function OrgView({ name, t }) {
   const [org, setOrg] = useState(null)
-  useEffect(() => {
-    api('GET', '/dsh/orgs/' + encodeURIComponent(name)).then((d) => setOrg(d.data || d))
+  const [form, setForm] = useState({ fullName: '', description: '' })
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const reload = useCallback(() => {
+    api('GET', '/dsh/orgs/' + encodeURIComponent(name)).then((d) => {
+      const o = d.data || d
+      if (o && o.name) { setOrg(o); setForm({ fullName: o.fullName || '', description: o.description || '' }) }
+      else setMsg((d && d.error) || t('loadFailed'))
+    })
   }, [name])
+  useEffect(() => { reload() }, [reload])
   if (org === null) return h('div', { className: 'dgs-empty' }, t('loading'))
   return h('div', null,
     h('div', { className: 'dgs-row', style: { marginBottom: 12 } },
       h('span', { className: 'dgs-h1' }, name),
       org.fullName ? h('span', { className: 'dgs-sub' }, org.fullName) : null),
+    msg ? h('div', { className: 'dgs-err' }, msg) : null,
     h('div', { className: 'dgs-card' },
       h('div', { style: { fontWeight: 700, marginBottom: 8 } }, '成员'),
       (org.members || []).map((m) =>
@@ -913,7 +922,22 @@ function OrgView({ name, t, kernelUrl }) {
       (org.repos || []).length === 0 ? h('div', { className: 'dgs-sub' }, '—')
         : org.repos.map((r) =>
             h('div', { key: r.name }, h('a', { className: 'dgs-name', href: '#/r/' + name + '/' + r.name }, r.name)))),
-    kernelUrl ? h('a', { className: 'dgs-sub', href: kernelUrl + '/org/' + name, target: '_blank', rel: 'noreferrer' }, '进阶管理 ↗') : null)
+    h('div', { className: 'dgs-card' },
+      h('div', { style: { fontWeight: 700, marginBottom: 8 } }, '组织设置'),
+      h('div', { className: 'dgs-row' },
+        h('span', { className: 'dgs-sub', style: { minWidth: 50 } }, '名称'),
+        h('input', { className: 'dgs-input', value: form.fullName, onChange: (e) => setForm({ ...form, fullName: e.target.value }) })),
+      h('div', { className: 'dgs-row' },
+        h('span', { className: 'dgs-sub', style: { minWidth: 50 } }, '描述'),
+        h('input', { className: 'dgs-input', value: form.description, onChange: (e) => setForm({ ...form, description: e.target.value }) })),
+      h('div', { className: 'dgs-row', style: { marginTop: 8 } },
+        h('button', { className: 'dgs-btn', disabled: busy,
+          onClick: async () => {
+            setBusy(true); setMsg('')
+            const d = await api('PATCH', '/dsh/orgs/' + encodeURIComponent(name), form)
+            setBusy(false)
+            d && d.ok ? (setMsg('✓ 已保存'), reload()) : setMsg((d && d.error) || 'failed')
+          } }, t('save')))))
 }
 
 // ── 用户 profile ───────────────────────────────────────────────────────────
@@ -980,7 +1004,7 @@ function Admin({ t }) {
 
 // ── 主页（仓库列表 + 建仓） ────────────────────────────────────────────────
 
-function GitPage({ onClose, t, kernelUrl }) {
+function GitPage({ onClose, t }) {
   useEffect(ensureStyles, [])
   const route = useHashRoute()
   const [me, setMe] = useState(null)
@@ -1008,7 +1032,7 @@ function GitPage({ onClose, t, kernelUrl }) {
     : repoRoute ? h(RepoBrowser, { repo: repoRoute, t, onBack: () => nav('/repos') })
     : view === 'explore' ? h(Explore, { t })
     : view === 'orgs' ? h(Orgs, { t })
-    : view === 'org' && seg[1] ? h(OrgView, { name: seg[1], t, kernelUrl })
+    : view === 'org' && seg[1] ? h(OrgView, { name: seg[1], t })
     : view === 'u' && seg[1] ? h(UserProfile, { name: decodeURIComponent(seg[1]), t })
     : view === 'admin' ? h(Admin, { t })
     : me === null ? h('div', { className: 'dgs-empty' }, t('loading'))
@@ -1120,17 +1144,11 @@ function closeGitPage() {
 }
 function openGitPage(t) {
   if (gitPageHost) { closeGitPage(); return }
-  fetch(API + '/status').then((r) => r.json()).then((status) => {
-    const el = document.createElement('div')
-    document.body.appendChild(el)
-    const root = require('react-dom/client').createRoot(el)
-    gitPageHost = { el, root }
-    root.render(h(GitPage, {
-      onClose: closeGitPage,
-      t,
-      kernelUrl: status && status.running ? (location.protocol + '//' + location.hostname + ':' + (status.port || 3400)) : null,
-    }))
-  }).catch(() => {})
+  const el = document.createElement('div')
+  document.body.appendChild(el)
+  const root = require('react-dom/client').createRoot(el)
+  gitPageHost = { el, root }
+  root.render(h(GitPage, { onClose: closeGitPage, t }))
 }
 
 function gitSidebarRoot() {

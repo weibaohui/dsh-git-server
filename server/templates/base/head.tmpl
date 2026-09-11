@@ -97,7 +97,7 @@
 	<link rel="stylesheet" href="{{AppSubURL}}/css/dsh-theme.css">
 {{end}}
 </head>
-<body>
+<body{{if .DSHThemeAdapter}} class="dsh-embed"{{end}}>
 	<div class="full height">
 		<noscript>This website works better with JavaScript</noscript>
 
@@ -107,7 +107,8 @@
 					<div class="column">
 						<div class="ui top secondary menu">
 							<a class="item brand" href="{{AppSubURL}}/">
-								<img class="ui mini image" src="{{AppSubURL}}/img/favicon.png">
+								<span class="dsh-brand-mark"></span>
+								<span class="dsh-brand-name">Git</span>
 							</a>
 
 							{{if .IsLogged}}

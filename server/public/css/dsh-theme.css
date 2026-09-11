@@ -1,151 +1,252 @@
 /*
- * dsh 主题适配层 —— 把 dsh 的 --dsw-alias-* token 映射到 gogs (semantic-ui) 的样式。
- * 亮色：:root 基础；暗色：[data-ds-dark-theme] 覆盖。
- * token 由 head.tmpl 的引导脚本从 localStorage 恢复（代理写入）。
+ * dsh Git 界面皮肤 —— 把 gogs(semantic-ui) DOM 完整重绘为 dsh 设计语言。
+ * 亮色 :root / 暗色 html[data-ds-dark-theme]；token 快照由引导脚本注入。
+ * 嵌入态 body.dsh-embed：紧凑页头、隐藏页脚（iframe 内节省纵向空间）。
  */
 :root {
   --gogs-bg: #ffffff;
-  --gogs-bg-alt: #f9fafb;
+  --gogs-bg-alt: #f7f8fa;
   --gogs-bg-inset: #f1f3f5;
   --gogs-text: #0f1115;
-  --gogs-text-secondary: #61666b;
-  --gogs-border: #e1e5ee;
+  --gogs-text-2: #61666b;
+  --gogs-text-3: #979da6;
+  --gogs-border: #e5e7eb;
+  --gogs-border-2: #d5d9e0;
   --gogs-brand: #4176e6;
+  --gogs-brand-weak: #4176e61a;
   --gogs-brand-hover: #5686fe;
-  --gogs-header-bg: #ffffff;
-  --gogs-header-text: #0f1115;
-  --gogs-code-bg: #f5f6f7;
+  --gogs-code-bg: #f6f7f9;
+  --gogs-shadow: 0 1px 2px 0 rgb(0 0 0 / 4%), 0 2px 8px 0 rgb(0 0 0 / 4%);
+  --gogs-shadow-lift: 0 2px 4px 0 rgb(0 0 0 / 5%), 0 8px 24px 0 rgb(0 0 0 / 8%);
+  --gogs-radius: 10px;
+  --gogs-radius-s: 7px;
+  --gogs-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI",
+    "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
 }
 html[data-ds-dark-theme] {
   --gogs-bg: #151517;
   --gogs-bg-alt: #1b1b1c;
   --gogs-bg-inset: #232324;
-  --gogs-text: #f9fafb;
-  --gogs-text-secondary: #979da6;
+  --gogs-text: #f3f4f6;
+  --gogs-text-2: #a8adb5;
+  --gogs-text-3: #7c8188;
   --gogs-border: #2c2c2e;
+  --gogs-border-2: #3a3a3d;
   --gogs-brand: #5686fe;
+  --gogs-brand-weak: #5686fe26;
   --gogs-brand-hover: #679efe;
-  --gogs-header-bg: #151517;
-  --gogs-header-text: #f9fafb;
   --gogs-code-bg: #1b1b1c;
+  --gogs-shadow: 0 1px 2px 0 rgb(0 0 0 / 24%), 0 2px 8px 0 rgb(0 0 0 / 20%);
+  --gogs-shadow-lift: 0 2px 4px 0 rgb(0 0 0 / 28%), 0 8px 24px 0 rgb(0 0 0 / 32%);
 }
 
-/* ── 基础 ─────────────────────────────────────────────── */
+/* ── 基础 ─────────────────────────────────────────────────── */
+html { color-scheme: light dark; }
 body {
   background: var(--gogs-bg) !important;
   color: var(--gogs-text) !important;
+  font-family: var(--gogs-font) !important;
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+  -webkit-font-smoothing: antialiased;
 }
-/* 顶栏 */
-.following.bar.light {
-  background: var(--gogs-header-bg) !important;
-  border-bottom: 1px solid var(--gogs-border) !important;
-}
-.following.bar .ui.menu .item, .following.bar a, .following.bar .brand {
-  color: var(--gogs-header-text) !important;
-}
-.following.bar .ui.menu .active.item, .following.bar .ui.dropdown .menu .item:hover {
-  background: var(--gogs-bg-inset) !important;
-}
-/* 链接 */
-a, .ui.breadcrumb a { color: var(--gogs-brand) !important; }
+::selection { background: var(--gogs-brand-weak); }
+a, .ui.breadcrumb a, .ui.breadcrumb .divider { color: var(--gogs-brand) !important; }
 a:hover { color: var(--gogs-brand-hover) !important; }
-/* 卡片/分段（仓库首页、issue 列表等） */
-.ui.segment, .ui.card, .ui.attached.segment, .ui.table.segment,
-.ui.tabs.container > .ui.tabular.menu .item.active {
+:focus-visible { outline: 2px solid var(--gogs-brand); outline-offset: 1px; border-radius: 4px; }
+h1, h2, h3, h4, h5 { color: var(--gogs-text) !important; }
+
+/* ── 顶栏：dsh 风格（毛玻璃 + 细边 + 胶囊导航） ─────────────── */
+.following.bar.light {
+  position: sticky; top: 0; z-index: 100;
+  background: color-mix(in srgb, var(--gogs-bg) 86%, transparent) !important;
+  -webkit-backdrop-filter: saturate(1.4) blur(14px);
+  backdrop-filter: saturate(1.4) blur(14px);
+  border-bottom: 1px solid var(--gogs-border) !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+.following.bar .ui.grid > .column { padding-top: 8px !important; padding-bottom: 8px !important; }
+.following.bar .ui.secondary.menu { background: transparent !important; }
+.following.bar .item { color: var(--gogs-text-2) !important; border-radius: 8px !important;
+  padding: 6px 12px !important; margin: 0 1px !important; font-weight: 500 !important; transition: all .15s ease; }
+.following.bar .item:hover { background: var(--gogs-bg-inset) !important; color: var(--gogs-text) !important; }
+.following.bar .item.active { background: var(--gogs-brand-weak) !important; color: var(--gogs-brand) !important; }
+.following.bar a.brand { display: flex; align-items: center; gap: 8px; padding: 6px 10px !important; }
+.dsh-brand-mark { width: 18px; height: 18px; border-radius: 5px; flex: none;
+  background: linear-gradient(135deg, var(--gogs-brand), var(--gogs-brand-hover));
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 25%); }
+.dsh-brand-name { font-weight: 700 !important; font-size: 15px !important; color: var(--gogs-text) !important; letter-spacing: .2px; }
+.following.bar .avatar.image, .following.bar img.ui.rounded.image {
+  border-radius: 999px !important; width: 26px !important; height: 26px !important; object-fit: cover;
+  border: 1px solid var(--gogs-border-2);
+}
+
+/* ── 卡片 / 分段 ─────────────────────────────────────────── */
+.ui.segment, .ui.attached.segment, .ui.cards > .ui.card, .ui.card {
   background: var(--gogs-bg) !important;
   color: var(--gogs-text) !important;
-  border-color: var(--gogs-border) !important;
+  border: 1px solid var(--gogs-border) !important;
+  border-radius: var(--gogs-radius) !important;
+  box-shadow: var(--gogs-shadow) !important;
 }
+.ui.attached.segment + .ui.attached.segment { border-top: 1px solid var(--gogs-border) !important; }
+.ui.dividing.header { border-bottom: 1px solid var(--gogs-border) !important; }
 .ui.divider { border-color: var(--gogs-border) !important; }
-/* 表格 */
-.ui.table {
-  background: var(--gogs-bg) !important;
+.ui.top.attached.header, .ui.attached.header {
+  background: var(--gogs-bg-alt) !important;
   color: var(--gogs-text) !important;
-  border-color: var(--gogs-border) !important;
+  border: 1px solid var(--gogs-border) !important;
+  border-radius: var(--gogs-radius) var(--gogs-radius) 0 0 !important;
+  font-weight: 600 !important;
 }
-.ui.table thead th { background: var(--gogs-bg-alt) !important; color: var(--gogs-text-secondary) !important; }
-.ui.table tr td { border-color: var(--gogs-border) !important; }
-.ui.table tr:hover td { background: var(--gogs-bg-alt) !important; }
-/* 输入框 */
-.ui.input input, input, textarea, select,
+.ui.attached.header + .ui.attached.segment { border-radius: 0 0 var(--gogs-radius) var(--gogs-radius) !important; }
+
+/* ── 按钮 ─────────────────────────────────────────────────── */
+.ui.button {
+  border-radius: 8px !important;
+  font-family: var(--gogs-font) !important;
+  font-weight: 500 !important;
+  box-shadow: none !important;
+  transition: all .15s ease !important;
+}
+.ui.primary.button, .ui.blue.button, .ui.green.button, .ui.positive.button, .ui.teal.button {
+  background: var(--gogs-brand) !important; color: #fff !important; border: none !important;
+}
+.ui.primary.button:hover, .ui.blue.button:hover, .ui.green.button:hover, .ui.positive.button:hover, .ui.teal.button:hover {
+  background: var(--gogs-brand-hover) !important;
+}
+.ui.green.button, .ui.positive.button { background: #22c55e !important; }
+.ui.green.button:hover, .ui.positive.button:hover { background: #4ed17e !important; }
+.ui.red.button, .ui.negative.button { background: #ef4444 !important; color: #fff !important; }
+.ui.red.button:hover { background: #f25a5a !important; }
+.ui.basic.button {
+  background: transparent !important; color: var(--gogs-text-2) !important;
+  border: 1px solid var(--gogs-border-2) !important; box-shadow: none !important;
+}
+.ui.basic.button:hover { background: var(--gogs-bg-inset) !important; color: var(--gogs-text) !important; }
+.ui.basic.primary.button, .ui.basic.blue.button, .ui.basic.green.button {
+  color: var(--gogs-brand) !important; border-color: var(--gogs-brand) !important; background: transparent !important;
+}
+.ui.basic.blue.button:hover { background: var(--gogs-brand-weak) !important; }
+.ui.mini.button, .ui.tiny.button { border-radius: 6px !important; }
+
+/* ── 输入 ─────────────────────────────────────────────────── */
+.ui.input input, input:not([type=checkbox]):not([type=radio]), textarea, select,
 .ui.form input, .ui.form textarea, .ui.selection.dropdown {
   background: var(--gogs-bg) !important;
   color: var(--gogs-text) !important;
-  border-color: var(--gogs-border) !important;
+  border: 1px solid var(--gogs-border-2) !important;
+  border-radius: 8px !important;
+  font-family: var(--gogs-font) !important;
+  transition: border-color .15s ease, box-shadow .15s ease !important;
 }
-.ui.input input:focus, input:focus, textarea:focus {
+.ui.input input:focus, input:focus, textarea:focus, select:focus {
   border-color: var(--gogs-brand) !important;
+  box-shadow: 0 0 0 3px var(--gogs-brand-weak) !important;
 }
-::placeholder { color: var(--gogs-text-secondary) !important; opacity: 0.7 !important; }
-/* 按钮：主按钮用 dsh 品牌色 */
-.ui.primary.button, .ui.blue.button, .ui.green.button, .ui.positive.button {
-  background: var(--gogs-brand) !important;
-  color: #fff !important;
-  border: none !important;
+::placeholder { color: var(--gogs-text-3) !important; opacity: 1 !important; }
+.ui.checkbox label, .ui.checkbox + label { color: var(--gogs-text-2) !important; }
+.ui.toggle.checkbox input:checked ~ label, .ui.checkbox input:checked ~ label { color: var(--gogs-brand) !important; }
+.ui.toggle.checkbox input:checked ~ .box, .ui.toggle.checkbox input:checked ~ label:before { background: var(--gogs-brand) !important; }
+
+/* ── 表格 ─────────────────────────────────────────────────── */
+.ui.table {
+  background: transparent !important; color: var(--gogs-text) !important;
+  border: none !important; border-collapse: separate !important; border-spacing: 0 4px !important;
 }
-.ui.primary.button:hover, .ui.blue.button:hover, .ui.green.button:hover, .ui.positive.button:hover {
-  background: var(--gogs-brand-hover) !important;
+.ui.table thead th {
+  background: transparent !important; color: var(--gogs-text-3) !important;
+  border: none !important; font-size: 12px !important; text-transform: uppercase; letter-spacing: .4px;
+  padding: 6px 12px !important;
 }
-.ui.basic.button {
-  background: transparent !important;
-  color: var(--gogs-text) !important;
-  border: 1px solid var(--gogs-border) !important;
+.ui.table tbody tr { background: var(--gogs-bg) !important; }
+.ui.table tbody tr td {
+  border-top: 1px solid var(--gogs-border) !important;
+  border-bottom: 1px solid var(--gogs-border) !important;
+  padding: 10px 12px !important;
 }
-.ui.basic.button:hover { background: var(--gogs-bg-alt) !important; }
-.ui.basic.primary.button, .ui.basic.blue.button, .ui.basic.green.button {
-  color: var(--gogs-brand) !important;
-  border-color: var(--gogs-brand) !important;
-}
-/* 菜单/导航 */
-.ui.menu {
-  background: var(--gogs-bg) !important;
-  color: var(--gogs-text) !important;
-  border-color: var(--gogs-border) !important;
-}
-.ui.menu .item { color: var(--gogs-text-secondary) !important; }
-.ui.menu .active.item {
-  color: var(--gogs-brand) !important;
-  background: var(--gogs-bg-alt) !important;
-}
-.ui.tabular.menu .active.item {
-  border-color: var(--gogs-border) var(--gogs-border) var(--gogs-bg) !important;
-}
+.ui.table tbody tr td:first-child { border-left: 1px solid var(--gogs-border); border-radius: 8px 0 0 8px; }
+.ui.table tbody tr td:last-child { border-right: 1px solid var(--gogs-border); border-radius: 0 8px 8px 0; }
+.ui.table tbody tr:hover td { background: var(--gogs-bg-alt) !important; }
+
+/* ── 菜单 / 标签页 ────────────────────────────────────────── */
+.ui.menu { background: transparent !important; border: none !important; }
+.ui.menu .item { color: var(--gogs-text-2) !important; border-radius: 8px !important; }
+.ui.menu .item:hover { background: var(--gogs-bg-inset) !important; color: var(--gogs-text) !important; }
+.ui.menu .item.active { background: var(--gogs-brand-weak) !important; color: var(--gogs-brand) !important; font-weight: 600 !important; }
+.ui.secondary.pointing.menu .item { border: none !important; }
+.ui.tabular.menu { border-bottom: 1px solid var(--gogs-border) !important; }
+.ui.tabular.menu .item { border: none !important; border-radius: 8px 8px 0 0 !important; background: transparent !important; }
+.ui.tabular.menu .active.item { background: var(--gogs-bg) !important; border: 1px solid var(--gogs-border) !important;
+  border-bottom: 1px solid var(--gogs-bg) !important; margin-bottom: -1px; }
 .ui.dropdown .menu {
-  background: var(--gogs-bg) !important;
-  border-color: var(--gogs-border) !important;
+  background: var(--gogs-bg) !important; border: 1px solid var(--gogs-border) !important;
+  border-radius: var(--gogs-radius) !important; box-shadow: var(--gogs-shadow-lift) !important; padding: 4px !important;
 }
-.ui.dropdown .menu .item { color: var(--gogs-text) !important; }
-.ui.dropdown .menu .item:hover { background: var(--gogs-bg-alt) !important; }
-/* 标签（label 徽章） */
+.ui.dropdown .menu .item { border-radius: 6px !important; color: var(--gogs-text) !important; }
+.ui.dropdown .menu .item:hover { background: var(--gogs-bg-inset) !important; }
+.ui.dropdown .menu .header { color: var(--gogs-text-3) !important; }
+.ui.vertical.menu { background: var(--gogs-bg) !important; border: 1px solid var(--gogs-border) !important; border-radius: var(--gogs-radius) !important; padding: 4px !important; }
+.ui.vertical.menu .item { border: none !important; }
+
+/* ── 标签 / 徽章 ──────────────────────────────────────────── */
 .ui.label {
-  background: var(--gogs-bg-inset) !important;
-  color: var(--gogs-text) !important;
-  border: 1px solid var(--gogs-border) !important;
+  background: var(--gogs-bg-inset) !important; color: var(--gogs-text-2) !important;
+  border: 1px solid var(--gogs-border) !important; border-radius: 6px !important; font-weight: 500 !important;
 }
-.ui.blue.label { background: var(--gogs-brand) !important; color: #fff !important; border: none !important; }
+.ui.blue.label, .ui.label.blue { background: var(--gogs-brand) !important; color: #fff !important; border: none !important; }
 .ui.green.label { background: #22c55e !important; color: #fff !important; border: none !important; }
 .ui.red.label { background: #ef4444 !important; color: #fff !important; border: none !important; }
-.ui.gray.label { background: var(--gogs-bg-inset) !important; }
-/* 代码视图 / markdown */
-.code-view, .markdown, pre, code, .file-content {
-  background: var(--gogs-bg) !important;
-  color: var(--gogs-text) !important;
+.ui.label.sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important; }
+.octicon { fill: currentColor; }
+
+/* ── 代码 / markdown ──────────────────────────────────────── */
+pre, code, .code-view, .file-content, .markdown, kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
 }
-.hljs { background: var(--gogs-bg-alt) !important; color: var(--gogs-text) !important; }
-.markdown code { background: var(--gogs-code-bg) !important; }
-.markdown pre { background: var(--gogs-code-bg) !important; }
-/* 弹窗 */
-.ui.modal {
-  background: var(--gogs-bg) !important;
-  color: var(--gogs-text) !important;
-  border: 1px solid var(--gogs-border) !important;
-}
-.ui.modal > .header { background: var(--gogs-bg-alt) !important; color: var(--gogs-text) !important; }
-/* 页脚 */
-footer { background: var(--gogs-bg-alt) !important; color: var(--gogs-text-secondary) !important; border-top: 1px solid var(--gogs-border) !important; }
-footer a { color: var(--gogs-text-secondary) !important; }
-/* 滚动条 */
+pre, .code-view, .markdown pre { background: var(--gogs-code-bg) !important; color: var(--gogs-text) !important;
+  border-radius: var(--gogs-radius) !important; border: 1px solid var(--gogs-border) !important; }
+.markdown code { background: var(--gogs-bg-inset) !important; border-radius: 5px; padding: 1px 5px; }
+.markdown pre code { background: transparent !important; padding: 0; }
+.hljs { background: transparent !important; color: var(--gogs-text) !important; }
+.file-view .code, .code-view tbody td { border-color: var(--gogs-border) !important; }
+.line-numbers { background: var(--gogs-bg-alt) !important; color: var(--gogs-text-3) !important;
+  border-right: 1px solid var(--gogs-border) !important; user-select: none; }
+
+/* ── 弹窗 / 提示 ──────────────────────────────────────────── */
+.ui.modal { background: var(--gogs-bg) !important; border: 1px solid var(--gogs-border) !important;
+  border-radius: 14px !important; box-shadow: var(--gogs-shadow-lift) !important; }
+.ui.modal > .header { background: var(--gogs-bg-alt) !important; color: var(--gogs-text) !important;
+  border-bottom: 1px solid var(--gogs-border) !important; border-radius: 14px 14px 0 0 !important; }
+.ui.modal .actions { background: var(--gogs-bg-alt) !important; border-top: 1px solid var(--gogs-border) !important; }
+.ui.message { border-radius: var(--gogs-radius) !important; border: 1px solid var(--gogs-border) !important;
+  background: var(--gogs-bg-alt) !important; color: var(--gogs-text) !important; box-shadow: none !important; }
+.ui.positive.message { border-color: #22c55e66 !important; background: #22c55e12 !important; }
+.ui.negative.message { border-color: #ef444455 !important; background: #ef44440f !important; }
+.ui.popup, [data-tooltip]:after { background: var(--gogs-text) !important; color: var(--gogs-bg) !important; border: none !important; }
+
+/* ── 进度 / 头像 / 杂项 ───────────────────────────────────── */
+.ui.progress .bar { background: var(--gogs-brand) !important; border-radius: 999px !important; }
+img.ui.avatar.image, img.ui.rounded.image { border-radius: 999px !important; }
+.repository .ui.action.small.input input { border-radius: 8px 0 0 8px !important; }
+.ui.action.input .button { border-radius: 0 8px 8px 0 !important; }
+.ui.action.input .button + .button { border-radius: 0 !important; }
+.ui.action.input .button:last-child { border-radius: 0 8px 8px 0 !important; }
+footer, .footer { background: transparent !important; border-top: 1px solid var(--gogs-border) !important;
+  color: var(--gogs-text-3) !important; }
+footer .ui.language.dropdown { color: var(--gogs-text-3) !important; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--gogs-border); border-radius: 6px; }
-::-webkit-scrollbar-thumb:hover { background: var(--gogs-text-secondary); }
+::-webkit-scrollbar-thumb { background: var(--gogs-border-2); border-radius: 6px; border: 2px solid var(--gogs-bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--gogs-text-3); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ── 嵌入态（iframe 内）：紧凑页头、隐藏页脚 ───────────────── */
+body.dsh-embed .following.bar.light .ui.grid > .column { padding-top: 4px !important; padding-bottom: 4px !important; }
+body.dsh-embed .following.bar .item { padding: 4px 10px !important; font-size: 13px !important; }
+body.dsh-embed .following.bar .item.brand { padding: 3px 8px !important; }
+body.dsh-embed footer { display: none !important; }
+body.dsh-embed .ui.container { width: calc(100% - 32px) !important; margin-left: auto !important; margin-right: auto !important; }
+body.dsh-embed .full.height { min-height: 100vh; display: flex; flex-direction: column; }
+body.dsh-embed .following.bar.light + .full.height,
+body.dsh-embed .full.height > .following.bar.light { flex: none; }

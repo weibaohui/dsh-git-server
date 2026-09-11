@@ -26,8 +26,6 @@ const crypto = require('node:crypto')
 const os = require('node:os')
 
 const PLUGIN_ID = 'dsh-git-server'
-// gogs 以该子路径对外（生成的链接/资产都带此前缀），宿主代理路由与之对齐
-const UI_SUBPATH = '/dsh-git-server/ui'
 const SERVER_DIR = path.join(__dirname, '..', 'server')
 
 const DEFAULTS = {
@@ -132,7 +130,7 @@ function writeAppIni(cfg) {
     '[server]',
     `HTTP_ADDR = ${cfg.host}`,
     `HTTP_PORT = ${cfg.port}`,
-    `EXTERNAL_URL = http://${cfg.host === '0.0.0.0' || cfg.host === '::' ? '127.0.0.1' : cfg.host}:${cfg.port}${UI_SUBPATH}/`,
+    `EXTERNAL_URL = http://${cfg.host === '0.0.0.0' || cfg.host === '::' ? '127.0.0.1' : cfg.host}:${cfg.port}/`,
     'DISABLE_SSH = true',
     'DISABLE_GRAVATAR = true',
     '',
@@ -351,7 +349,6 @@ async function spawnAndReady(cfg, { logger = () => {}, onExit, instanceTag } = {
 module.exports = {
   ensureDeps,
   locateUmStore,
-  UI_SUBPATH,
   PLUGIN_ID,
   DEFAULTS,
   NUM_RANGES,

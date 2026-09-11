@@ -308,8 +308,6 @@ export class Context {
     this.Data['RestLangs'] = allLangs.filter((l) => l.Lang !== this.lang);
     this.Data['i18n'] = this.locale;
     this.Data['Tr'] = (key: string, ...args: any[]) => this.locale.Tr(key, ...args);
-    // dsh 主题适配：由代理路径注入（head.tmpl 读取）
-    this.Data['DSHThemeAdapter'] = String(this.req.headers['x-dsh-proxy'] ?? '') === '1';
     this.Data['Flash'] = this.flash;
     this.Data['ShowFooterBranding'] = conf.showFooterBranding;
     if (process.env.TPL_DEBUG && tmpl.startsWith('repo/branches')) {
@@ -502,6 +500,12 @@ export async function authenticateUserByBasic(header: string): Promise<{ user: U
   if (parts.length !== 2 || parts[0] !== 'Basic') return null;
   const [uname, passwd] = basicAuthDecode(parts[1]);
   const user = db.getUserByUsername(uname);
+  // 兜底管理员（插件自有账号，DSH_BOOTSTRAP_ADMIN）：永远本地校验——
+  // 宿主用它铸个人令牌/紧急登录，它不是 UM 用户，不能被 UM-first 拦下
+  const bootstrapName = (process.env.DSH_BOOTSTRAP_ADMIN || '').split(':')[0] || 'root';
+  if (user && user.name === bootstrapName && verifyPassword(passwd, user.salt, user.passwd)) {
+    return { user, isBasic: true };
+  }
   // 账户单一来源：UM service 启用时认证只走 service；本地密码仅当
   // service 不可用（模块/用户库缺失）时作紧急兜底（兜底管理员 root 等）
   if (umBridge.umServiceEnabled()) {

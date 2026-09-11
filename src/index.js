@@ -171,6 +171,52 @@ module.exports = {
       cfg.adminPassword = pw
     }
 
+    // ── 用户桥：dsh 会话 → kernel 用户（建号）→ kernel 个人令牌（按人缓存） ──
+    const userTokens = new Map() // username → { pw, token }（子进程重启由 reconcile 清空）
+    async function kernelTokenFor(cfg, username) {
+      const hit = userTokens.get(username)
+      if (hit && hit.pw === cfg.adminPassword) return hit.token
+      // 1) 影子建号（kernel 侧按 UM profile 同名开户；幂等）
+      await fetch(`http://127.0.0.1:${cfg.port}/api/web/user/dsh-impersonate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Dsh-Secret': cfg.impersonateSecret },
+        body: new URLSearchParams({ username }).toString(),
+      }).catch(() => {})
+      // 2) 管理员 basic 为该用户铸个人令牌（此后所有 API 以本人身份执行）
+      const res = await fetch(`http://127.0.0.1:${cfg.port}/api/v1/users/${encodeURIComponent(username)}/tokens`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Basic ' + Buffer.from(`root:${cfg.adminPassword}`).toString('base64'),
+        },
+        body: JSON.stringify({ name: 'dsh-' + Date.now().toString(36) }),
+      })
+      if (res.status !== 200 && res.status !== 201) throw new Error(`铸用户令牌失败(${username}): ${res.status}`)
+      const token = ((await res.json()) || {}).sha1
+      userTokens.set(username, { pw: cfg.adminPassword, token })
+      return token
+    }
+    async function kernelApi(cfg, username, method, path, body) {
+      const token = await kernelTokenFor(cfg, username)
+      const headers = { Authorization: `token ${token}` }
+      if (body !== undefined) headers['Content-Type'] = 'application/json'
+      const res = await fetch(`http://127.0.0.1:${cfg.port}/api/v1${path}`, {
+        method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
+      })
+      const text = await res.text()
+      let json = null
+      try { json = JSON.parse(text) } catch {}
+      return { status: res.status, json }
+    }
+    function umUsernameOf(req) {
+      // 网关链路：um_session 由网关代理以 x-um-session 头转发（cookie 被其
+      // 替换为 dsh-auth）；直连链路：cookie 里带 um_session。两者都查。
+      const hdr = req.headers['x-um-session']
+      const m = hdr ? [null, String(hdr)] : String(req.headers.cookie || '').match(/um_session=([^;]+)/)
+      if (!m) return null
+      return umUsernameForSession(decodeURIComponent(m[1]))
+    }
+
     // ── ts-gogs 管理桥：用 root:adminPassword 铸 token，代理仓库管理 ──────
     let adminTokenCache = null
     async function adminToken(cfg) {
@@ -310,8 +356,7 @@ module.exports = {
       }
 
       state.fingerprint = fp // 先记账防并发重建；失败时错误落在 state.error
-      umGogsSession = null
-      perUserSessions.clear()
+      userTokens.clear()
       if (state.handle) { await state.handle.stop(); state.handle = null }
       try {
         // 依赖自检/自动安装的日志始终可见；子进程自身输出仅在 verbose 模式转发
@@ -371,6 +416,21 @@ module.exports = {
     })().catch((e) => logger.error(`dsh-git-server: init: ${(e && e.message) || e}`))
 
     // ── 同源 API：status / settings ─────────────────────────────────────
+    function repoCard(x, actor) {
+      return {
+        id: x.id, name: x.name, owner: (x.owner && (x.owner.login || x.owner.username)) || '',
+        fullName: x.full_name, private: !!x.private,
+        stars: x.stars_count || 0, issues: x.open_issues_count || 0, forks: x.forks_count || 0,
+        description: x.description || '',
+      }
+    }
+    function errText(r) {
+      const j = r.json
+      if (j && j.message) return String(j.message)
+      if (Array.isArray(j) && j[0] && j[0].message) return j[0].message
+      return 'kernel ' + r.status
+    }
+
     function sendJson(res, statusCode, payloadOut) {
       const body = JSON.stringify(payloadOut)
       res.writeHead(statusCode, {
@@ -399,92 +459,7 @@ module.exports = {
       })
     }
 
-    // ── 完整界面反代：/dsh-git-server/ui/* → 内嵌 ts-gogs ────────────────
-    // 浏览器统一从 dsh 访问 git 网页端（dsh 门禁认证），不再直连插件端口。
-    // git 客户端仍可直连 <host>:<port>（CLI 凭据简单，走门禁反而不兼容）。
-    // user-management 模式下代理自动注入 gogs 会话（root 已是 UM 凭据的映射
-    // 身份）——内嵌界面免二次登录；用户自己登录过则保留其会话。
-    let umGogsSession = null // 兼容字段：子进程重启后由 reconcile 清空
-    const perUserSessions = new Map() // um_session token → gogs 会话 cookie
-    async function gogsSessionCookie(cfg, reqCookie) {
-      if (reqCookie && /i_like_gogs=/.test(reqCookie)) return null // 已有 gogs 会话，不覆盖
-      // dsh 会话（um_session）→ 用户名 → 铸同名的 gogs 会话（账户 1:1）
-      const umToken = (reqCookie || '').match(/um_session=([^;]+)/)
-      if (!umToken) return null
-      const username = umUsernameForSession(decodeURIComponent(umToken[1]))
-      if (!username) return null
-      const cacheKey = umToken[1]
-      const hit = perUserSessions.get(cacheKey)
-      if (hit) return hit
-      try {
-        const res = await fetch(`http://127.0.0.1:${cfg.port}/api/web/user/dsh-impersonate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Dsh-Secret': cfg.impersonateSecret },
-          body: new URLSearchParams({ username }).toString(),
-        })
-        const m = (res.headers.get('set-cookie') || '').match(/i_like_gogs=[^;]+/)
-        if (!m) return null
-        perUserSessions.set(cacheKey, m[0])
-        return m[0]
-      } catch {
-        return null
-      }
-    }
-
-    // ── 完整界面反代：/dsh-git-server/ui/* → 内嵌 ts-gogs ────────────────
-    // 浏览器统一从 dsh 访问 git 网页端（dsh 门禁认证），不再直连插件端口。
-    // git 客户端仍可直连 <host>:<port>（CLI 凭据简单，走门禁反而不兼容）。
-    // user-management 模式下自动注入 gogs 会话（root 是 UM 凭据的映射身份），
-    // 内嵌界面免二次登录；用户自己登录过则保留其会话。
-    async function proxyUi(req, res) {
-      const cfg = engine.normalizeConfig(effective())
-      const url = new URL(req.url || '/', 'http://dsh.local')
-      const targetPath = url.pathname + url.search // 已带 /dsh-git-server/ui 前缀（= 子进程子路径）
-      const sess = await gogsSessionCookie(cfg, req.headers.cookie)
-      const headers = { ...req.headers }
-      headers.host = `127.0.0.1:${cfg.port}`
-      headers['x-dsh-proxy'] = '1'
-      delete headers['content-length']
-      delete headers.connection
-      if (sess) headers.cookie = headers.cookie ? headers.cookie + '; ' + sess : sess
-
-      await new Promise((resolve) => {
-        const up = require('node:http').request(
-          { host: '127.0.0.1', port: cfg.port, path: targetPath, method: req.method, headers },
-          (ur) => {
-            const outHeaders = {}
-            for (const [k, v] of Object.entries(ur.headers)) {
-              if (['connection', 'transfer-encoding', 'content-security-policy', 'x-frame-options'].includes(k)) continue
-              outHeaders[k] = v
-            }
-            res.writeHead(ur.statusCode || 502, outHeaders)
-            ur.on('data', (c) => { if (!res.write(c)) ur.pause() })
-            res.on('drain', () => ur.resume())
-            ur.on('end', () => res.end())
-            ur.on('error', () => { try { res.end() } catch {} })
-            resolve()
-          },
-        )
-        up.on('error', (e) => {
-          try {
-            res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
-            res.end('dsh-git-server: Git 服务器未运行 — 请在设置里启用')
-          } catch {}
-          resolve()
-        })
-        req.on('error', () => up.destroy())
-        req.pipe(up)
-      })
-    }
-
     if (webServer && typeof webServer.register === 'function') {
-      ctx.effect(() => {
-        webServer.register({
-          kind: 'prefix',
-          path: engine.UI_SUBPATH,
-          handler: (req, res) => { proxyUi(req, res).catch((e) => logger.error('dsh-git-server: proxy: ' + ((e && e.message) || e))) },
-        })
-      }, 'dsh-git-server: ui proxy route')
       ctx.effect(() => {
         webServer.register({
           kind: 'prefix',
@@ -497,35 +472,127 @@ module.exports = {
                 sendJson(res, 200, status())
                 return
               }
-              if (req.method === 'GET' && rest === '/repos') {
-                const cfg = engine.normalizeConfig(effective())
-                if (!state.handle) { sendJson(res, 200, { ok: true, repos: [] }); return }
-                const list = await gogsApi(cfg, 'GET', '/user/repos')
-                const repos = (Array.isArray(list.json) ? list.json : []).map((x) => ({
-                  id: x.id, name: x.name, fullName: x.full_name || x.name,
-                  private: !!x.private, htmlUrl: x.html_url || x.clone_url,
-                  cloneUrl: `http://${cfg.host === '0.0.0.0' ? '127.0.0.1' : cfg.host}:${cfg.port}/${x.full_name || x.name}.git`,
-                  stars: x.stars_count, issues: x.open_issues_count,
-                }))
-                sendJson(res, 200, { ok: true, repos })
+              const cfg = engine.normalizeConfig(effective())
+              const actor = umUsernameOf(req) // dsh 会话 → 操作者本人
+              if (!actor) { sendJson(res, 401, { ok: false, error: '需要 dsh 登录' }); return }
+
+              // GET /me — 本人 + 仓库列表
+              if (req.method === 'GET' && (rest === '/me' || rest === '' || rest === '/')) {
+                const me = await kernelApi(cfg, actor, 'GET', '/user')
+                const repos = await kernelApi(cfg, actor, 'GET', '/user/repos')
+                sendJson(res, 200, {
+                  ok: true,
+                  user: { name: actor, isAdmin: !!(me.json && me.json.is_admin) },
+                  repos: Array.isArray(repos.json) ? repos.json.map((x) => repoCard(x)) : [],
+                })
                 return
               }
+              // POST /repos — 建仓（本人身份）
               if (req.method === 'POST' && rest === '/repos') {
                 const body = JSON.parse((await readBody(req)) || '{}')
-                const cfg = engine.normalizeConfig(effective())
                 const name = String(body.name || '').trim()
                 if (!name) { sendJson(res, 400, { ok: false, error: '仓库名不能为空' }); return }
-                const r = await gogsApi(cfg, 'POST', '/user/repos', { name, private: !!body.private, auto_init: body.autoInit !== false, readme: 'Default' })
-                sendJson(res, r.status === 201 ? 201 : r.status, r.status === 201 ? { ok: true, repo: r.json } : { ok: false, error: (r.json && r.json.message) || '创建失败' })
+                const r = await kernelApi(cfg, actor, 'POST', '/user/repos',
+                  { name, private: !!body.private, auto_init: body.autoInit !== false, readme: 'Default' })
+                sendJson(res, r.status === 201 ? 200 : r.status,
+                  r.status === 201 ? { ok: true, repo: repoCard(r.json, actor) } : { ok: false, error: errText(r) })
                 return
               }
-              if (req.method === 'DELETE' && rest.startsWith('/repos/')) {
-                const full = decodeURIComponent(rest.slice('/repos/'.length)).replace(/\.git$/, '')
-                const cfg = engine.normalizeConfig(effective())
-                const r = await gogsApi(cfg, 'DELETE', `/repos/root/${full}`)
-                sendJson(res, [200, 204].includes(r.status) ? 200 : r.status, [200, 204].includes(r.status) ? { ok: true } : { ok: false, error: '删除失败' })
+              // DELETE /repos/:owner/:name
+              const delM = req.method === 'DELETE' && rest.startsWith('/repos/') && rest.split('/').length === 4
+              if (delM) {
+                const [, , owner, name] = rest.split('/')
+                const r = await kernelApi(cfg, actor, 'DELETE', `/repos/${owner}/${name}`)
+                sendJson(res, [200, 204].includes(r.status) ? 200 : r.status,
+                  [200, 204].includes(r.status) ? { ok: true } : { ok: false, error: '删除失败（无权限或不存在）' })
                 return
               }
+              // GET /repos/:o/:r/tree|raw|commits|branches|issues...
+              const parts = rest.split('/').filter(Boolean) // repos,o,r,what...
+              if (req.method === 'GET' && parts[0] === 'repos' && parts.length >= 4) {
+                const [, owner, repo, ...tail] = parts
+                const what = tail.join('/')
+                const q = (n) => url.searchParams.get(n) || ''
+                if (what === 'tree') {
+                  const pth = q('path') ? '?ref=' + encodeURIComponent(q('ref') || '') + '&path=' + encodeURIComponent(q('path'))
+                    : '?ref=' + encodeURIComponent(q('ref') || '')
+                  const r = await kernelApi(cfg, actor, 'GET', `/repos/${owner}/${repo}/contents${pth}`)
+                  sendJson(res, r.status, Array.isArray(r.json)
+                    ? { ok: true, entries: r.json.map((e) => ({ name: e.name, type: e.type, path: e.path, size: e.size })) }
+                    : { ok: false, error: errText(r) })
+                  return
+                }
+                if (what === 'raw') {
+                  const r = await kernelApi(cfg, actor, 'GET',
+                    `/repos/${owner}/${repo}/raw/${encodeURIComponent(q('ref'))}/${q('path').split('/').map(encodeURIComponent).join('/')}`)
+                  // raw 端点返回文本（非 JSON）
+                  const res2 = await fetch(`http://127.0.0.1:${cfg.port}/api/v1/repos/${owner}/${repo}/raw/${encodeURIComponent(q('ref'))}/${q('path').split('/').map(encodeURIComponent).join('/')}`,
+                    { headers: { Authorization: 'token ' + await kernelTokenFor(cfg, actor) } })
+                  const text = await res2.text()
+                  sendJson(res, 200, { ok: res2.status === 200, text: res2.status === 200 ? text.slice(0, 512 * 1024) : '', error: res2.status === 200 ? null : 'not found' })
+                  return
+                }
+                if (what === 'commits') {
+                  const r = await kernelApi(cfg, actor, 'GET', `/repos/${owner}/${repo}/commits${q('ref') ? '?sha=' + encodeURIComponent(q('ref')) : ''}`)
+                  const list = Array.isArray(r.json) ? r.json : (r.json && r.json.data) || []
+                  sendJson(res, r.status, { ok: Array.isArray(list), commits: (Array.isArray(list) ? list : []).slice(0, 30).map((c) => ({
+                    sha: (c.sha || '').slice(0, 10), message: (c.commit && c.commit.message) || c.message || '',
+                    author: (c.author && (c.author.login || c.author.name)) || (c.commit && c.commit.author && c.commit.author.name) || '',
+                    date: (c.commit && c.commit.author && c.commit.author.date) || c.created_at || '',
+                  })) })
+                  return
+                }
+                if (what === 'branches') {
+                  const r = await kernelApi(cfg, actor, 'GET', `/repos/${owner}/${repo}/branches`)
+                  sendJson(res, r.status, { ok: Array.isArray(r.json), branches: (Array.isArray(r.json) ? r.json : []).map((b) => ({ name: b.name, sha: (b.commit && b.commit.id) || b.sha })) })
+                  return
+                }
+                if (what === 'issues') {
+                  const state = q('state') || 'open'
+                  const r = await kernelApi(cfg, actor, 'GET', `/repos/${owner}/${repo}/issues?state=${state}&type=issues`)
+                  sendJson(res, r.status, { ok: Array.isArray(r.json), issues: (Array.isArray(r.json) ? r.json : []).map((i) => ({
+                    number: i.number, title: i.title, state: i.state, user: i.user && i.user.login,
+                    comments: i.comments, updatedAt: i.updated_at,
+                  })) })
+                  return
+                }
+                if (what.startsWith('issues/') && tail.length === 3) {
+                  // issues/:idx/comments
+                  const idx = tail[1]
+                  if (tail[2] === 'comments') {
+                    const r = await kernelApi(cfg, actor, 'GET', `/repos/${owner}/${repo}/issues/${idx}/comments`)
+                    sendJson(res, r.status, { ok: Array.isArray(r.json), comments: (Array.isArray(r.json) ? r.json : []).map((c) => ({
+                      id: c.id, body: c.body, user: c.user && c.user.login, created: c.created_at,
+                    })) })
+                    return
+                  }
+                }
+              }
+              // POST /repos/:o/:r/issues — 建工单
+              if (req.method === 'POST' && parts[0] === 'repos' && parts[3] === 'issues' && parts.length === 4) {
+                const [, owner, repo] = parts
+                const body = JSON.parse((await readBody(req)) || '{}')
+                const r = await kernelApi(cfg, actor, 'POST', `/repos/${owner}/${repo}/issues`, { title: String(body.title || ''), body: String(body.body || '') })
+                sendJson(res, r.status === 201 ? 200 : r.status, r.status === 201 ? { ok: true } : { ok: false, error: errText(r) })
+                return
+              }
+              // POST /repos/:o/:r/issues/:idx/comments
+              if (req.method === 'POST' && parts[0] === 'repos' && parts[3] === 'issues' && parts[5] === 'comments') {
+                const [, owner, repo, , idx] = parts
+                const body = JSON.parse((await readBody(req)) || '{}')
+                const r = await kernelApi(cfg, actor, 'POST', `/repos/${owner}/${repo}/issues/${idx}/comments`, { body: String(body.body || '') })
+                sendJson(res, r.status === 201 ? 200 : r.status, r.status === 201 ? { ok: true } : { ok: false, error: errText(r) })
+                return
+              }
+              // PATCH /repos/:o/:r/issues/:idx — 开/关工单
+              if (req.method === 'PATCH' && parts[0] === 'repos' && parts[3] === 'issues' && parts.length === 5) {
+                const [, owner, repo, , idx] = parts
+                const body = JSON.parse((await readBody(req)) || '{}')
+                const r = await kernelApi(cfg, actor, 'PATCH', `/repos/${owner}/${repo}/issues/${idx}`, { state: body.state === 'closed' ? 'closed' : 'open' })
+                sendJson(res, r.status === 201 || r.status === 200 ? 200 : r.status, { ok: [200, 201].includes(r.status) })
+                return
+              }
+
               if (req.method === 'PUT' && rest === '/settings') {
                 let patchBody = null
                 try {

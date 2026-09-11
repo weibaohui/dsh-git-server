@@ -112,6 +112,13 @@ export async function handleWebAPI(c, subPath) {
             const password = String(req.password ?? '');
             const user = db.getUserByUsername(username) ?? db.getUserByEmail(username);
             const { verifyPassword } = await import('./authx/password.js');
+            // 兜底管理员：永远允许本地登录（插件自有紧急账号）
+            const bootstrapName = (process.env.DSH_BOOTSTRAP_ADMIN || '').split(':')[0] || 'root';
+            if (user && user.type === 0 && user.name === bootstrapName && verifyPassword(password, user.salt, user.passwd)) {
+                completeSignIn(c, user);
+                c.JSONSuccess({});
+                return true;
+            }
             // 账户单一来源：UM service 启用时登录只走 service；本地密码仅当
             // service 不可用时兜底（防影子账号残留的旧同步密码绕过）
             const um = await import('./authx/um.js');

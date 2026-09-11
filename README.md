@@ -14,35 +14,19 @@ dsh 会话里沉淀的代码、脚本、工作区成果，需要一个**自己�
 - **界面统一**：完整 gogs 界面通过反向代理嵌入 dsh 设置窗口，浏览器全程只访问 dsh（受 dsh 登录门禁保护），无需另开端口页面；
 - **账号打通**：可选复用 user-management 的用户名密码，git 操作和网页登录免另记一套账号。
 
-## 界面
+## 界面（dsh 原生插件 UI）
 
-设置 → Git 服务器：完整 gogs 界面内嵌在 dsh 设置窗口里，顶部工具条提供状态、刷新与新标签页打开。
+前端不再内嵌内核网页，而是**dsh 插件原生界面**：React + dsh 主题 token（`--dsw-alias-*`，亮暗自动跟随）、dsh locale（zh/en）、经宿主同源 API 通信——零 iframe、零桥接。
 
-![设置窗口内嵌 Git 服务器](docs/settings-embed.png)
+- **侧栏底部「Git」入口 → 全屏管理页**：仓库列表（建仓/删除/星标工单计数）→ 仓库浏览四个标签页（**文件**树+文件内容、**提交**历史、**分支**、**工单**列表/新建/评论/关闭）。数据按当前 dsh 登录用户身份执行（权限即本人权限）。
 
-内嵌界面即完整 gogs：控制面板活动流、仓库、工单、PR 全部可交互。
+![原生管理页：文件树](docs/native-files.png)
 
-![内嵌控制面板](docs/ui-dashboard.png)
+- **设置 → Git 服务器**：服务配置（启停/监听/端口/数据目录）。
 
-仓库页：文件列表、提交历史、clone 地址、star/watch。
+![设置节](docs/native-settings.png)
 
-![仓库页](docs/ui-repo.png)
-
-工单页：
-
-![工单页](docs/ui-issues.png)
-
-展开「配置与管理」：服务/认证/注册/管理员密码与仓库管理（列表、创建、删除）集中在一处。
-
-## 主题跟随 dsh
-
-内嵌界面的配色跟随 dsh 的外观设置（亮/暗）uff1a插件把 dsh 的主题 token 快照同步进内嵌页面，Git 界面用同一套设计变量渲染——dsh 切深色时内嵌界面自动跟随，品牌色取自 dsh 主题。
-
-深色模式（随 dsh 自动切换）：
-
-![深色模式](docs/ui-dark.png)
-
-![配置与管理](docs/settings-config.png)
+- **进阶页面**（PR 评审、wiki、发版、组织）经「高级页面 ↗」直达内核网页端（同一 dsh 账号登录）。
 
 ## 安装
 
@@ -63,7 +47,7 @@ git clone http://127.0.0.1:3400/root/drill-repo.git
 cd drill-repo && git checkout -b feature && ... && git push origin feature
 ```
 
-4. 浏览器里所有管理操作都在 **dsh 设置 → Git 服务器** 的内嵌界面完成。
+4. 日常操作在 **侧栏 → Git** 全屏页完成；进阶功能（PR/wiki/发版）点右上「高级页面」直达内核网页端。
 
 ## 配置
 
@@ -96,6 +80,7 @@ dsh-git-server 不设独立账号体系。网页登录、git HTTP Basic、API Ba
 - **隔离性**：git 服务器是重负载组件（原生 sqlite、子进程 hook、可选 SSH）；子进程崩溃只影响 Git 服务（3 秒自动拉起），进程内融合则一崩全崩；
 - **Git 协议需要独立端点**：HTTP smart 协议有特殊内容类型与流式语义，且 CLI 凭据模型与网页门禁天然不同——独立端口是 GitHub/Gitea/Gogs 的共同实践，融合反而要为 git 流量单独开口；
 - **上游可追踪**：ts-gogs 有 274 例对上游 gogs 的交叉验证测试；源码级深度改造会让后续同步上游修复变成人力工程；
+- **身份链**：dsh 登录会话经 user-management 网关以 `x-um-session` 头转发到宿主；宿主解析出用户名后以其身份在内核铸个人令牌并代理 API——每一步都是本人权限，无全局管理员透传。
 - **代理很薄**：一个 `http.request` 管道（约 60 行），无协议改写；界面统一靠 ts-gogs 原生子路径能力（`EXTERNAL_URL` 子路径 → 链接/资产全带前缀），非运行时 hack。
 
 同时本包**直接拥有 ts-gogs 源码拷贝**（`server/` 目录，一次性导入后自主演进）：这份拷贝是 dsh 内部私有内核，不再对外开放、不追踪上游——定制全部以减法落在拷贝里。已铲除：安装向导、外部登录源（admin/auths）、网页注册路由、Gogs 本地两步验证、SSH 全套面（内置 SSH 服务/authorized_keys 写入/serv 入口/SSH 密钥管理页与 API/部署密钥/ssh2 依赖）、Gogs 品牌与外链（改为 dsh Git）。后续定制继续在拷贝内做减法。

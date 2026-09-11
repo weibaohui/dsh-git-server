@@ -241,12 +241,3 @@ footer .ui.language.dropdown { color: var(--gogs-text-3) !important; }
 ::-webkit-scrollbar-thumb:hover { background: var(--gogs-text-3); }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* ── 嵌入态（iframe 内）：紧凑页头、隐藏页脚 ───────────────── */
-body.dsh-embed .following.bar.light .ui.grid > .column { padding-top: 4px !important; padding-bottom: 4px !important; }
-body.dsh-embed .following.bar .item { padding: 4px 10px !important; font-size: 13px !important; }
-body.dsh-embed .following.bar .item.brand { padding: 3px 8px !important; }
-body.dsh-embed footer { display: none !important; }
-body.dsh-embed .ui.container { width: calc(100% - 32px) !important; margin-left: auto !important; margin-right: auto !important; }
-body.dsh-embed .full.height { min-height: 100vh; display: flex; flex-direction: column; }
-body.dsh-embed .following.bar.light + .full.height,
-body.dsh-embed .full.height > .following.bar.light { flex: none; }

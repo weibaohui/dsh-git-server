@@ -149,14 +149,6 @@ window.__ModuleLoader__.load({
     .dgs-md blockquote{border-left:3px solid var(--dsw-alias-border-l2);margin:8px 0;padding:2px 12px;color:var(--dsw-alias-label-secondary)}
     .dgs-md table{border-collapse:collapse}
     .dgs-md td,.dgs-md th{border:1px solid var(--dsw-alias-border-l2);padding:4px 10px}
-    .dsh-git-entry{display:flex;align-items:center;gap:8px;width:100%;height:34px;padding:0 10px;margin:2px 0 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary,var(--dsw-text-primary,inherit));font:inherit;font-size:13px;cursor:pointer;text-align:left}
-    .dsh-git-entry:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent)}
-    .dsh-git-entry .dsh-git-entry-icon{flex:none;line-height:1}
-    .dsh-git-entry .dsh-git-entry-mark{flex:none;width:16px;height:16px;border-radius:5px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);display:inline-block}
-    .dsh-git-entry .dsh-git-entry-stats{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--dsw-alias-label-secondary,var(--dsw-text-secondary,gray));font-variant-numeric:tabular-nums;white-space:nowrap}
-    .dsh-git-entry .dsh-git-entry-dot{width:6px;height:6px;border-radius:6px;background:var(--dsw-alias-state-success-primary);display:inline-block}
-    [data-sidebar-collapsed] .dsh-git-entry,[class*="_collapsed"] .dsh-git-entry{width:36px;height:36px;min-width:36px;margin:0 0 12px;padding:0;justify-content:center;gap:0;text-align:center}
-    [data-sidebar-collapsed] .dsh-git-entry .dsh-git-entry-label,[data-sidebar-collapsed] .dsh-git-entry .dsh-git-entry-stats,[class*="_collapsed"] .dsh-git-entry .dsh-git-entry-label,[class*="_collapsed"] .dsh-git-entry .dsh-git-entry-stats{display:none}
     </style>`
       document.head.appendChild(holder)
     }
@@ -1193,7 +1185,7 @@ window.__ModuleLoader__.load({
         style.textContent = `
     .dsh-git-entry{display:flex;align-items:center;gap:8px;width:100%;height:34px;padding:0 10px;margin:2px 0 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary,var(--dsw-text-primary,inherit));font:inherit;font-size:13px;cursor:pointer;text-align:left}
     .dsh-git-entry:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent)}
-    .dsh-git-entry .dsh-git-entry-mark{flex:none;width:16px;height:16px;border-radius:5px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);display:inline-block}
+    .dsh-git-entry .dsh-git-entry-icon{flex:none;line-height:1}
     .dsh-git-entry .dsh-git-entry-stats{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--dsw-alias-label-secondary,var(--dsw-text-secondary,gray));font-variant-numeric:tabular-nums;white-space:nowrap}
     .dsh-git-entry .dsh-git-entry-dot{width:6px;height:6px;border-radius:6px;background:var(--dsw-alias-state-success-primary);display:inline-block}
     [data-sidebar-collapsed] .dsh-git-entry,[class*="_collapsed"] .dsh-git-entry{width:36px;height:36px;min-width:36px;margin:0 0 12px;padding:0;justify-content:center;gap:0;text-align:center}
@@ -1205,8 +1197,8 @@ window.__ModuleLoader__.load({
       entry.type = 'button'
       entry.setAttribute(GIT_ENTRY_ATTR, '')
       entry.className = 'dsh-git-entry'
-      entry.title = 'Git — 仓库 / 工单 / PR / Wiki / 发版'
-      entry.innerHTML = '<span class="dsh-git-entry-mark"></span><span class="dsh-git-entry-label">Git</span><span class="dsh-git-entry-stats"></span>'
+      entry.title = '代码仓库 — 仓库 / 工单 / PR / Wiki / 发版'
+      entry.innerHTML = '<span class="dsh-git-entry-icon">📦</span><span class="dsh-git-entry-label">代码仓库</span><span class="dsh-git-entry-stats"></span>'
       entry.addEventListener('click', () => openGitPage(t))
       const stats = entry.querySelector('.dsh-git-entry-stats')
       const refreshStats = () => {

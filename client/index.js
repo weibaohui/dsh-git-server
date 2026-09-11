@@ -1257,27 +1257,37 @@ function Pulls({ repo, t, preset, onPresetDone, onGoIssuesSub }) {
   const [list, setList] = useState(null)
   const [openIdx, setOpenIdx] = useState(null)
   const [creating, setCreating] = useState(false)
+  const [state, setState] = useState('open')
+  const [flt, setFlt] = useState({ label: '', milestone: '', assignee: '' })
+  const [sort, setSort] = useState('latest')
+  const [meta, setMeta] = useState({ labels: [], milestones: [], collabs: [] })
   const [branches, setBranches] = useState([])
   const [form, setForm] = useState({ title: '', head: '', base: '', body: '' })
+  const [sel, setSel] = useState({ labels: new Set(), milestone: '', assignee: '' })
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [preview, setPreview] = useState(null)
+  const [previewMode, setPreviewMode] = useState(false)
+  const [previewHtml, setPreviewHtml] = useState('')
   const reload = useCallback(() => {
     setList(null)
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/pulls`).then((d) => setList(Array.isArray(d) ? d : (d.data || d.pulls || [])))
   }, [repo.owner, repo.name])
-  useEffect(() => {
-    if (!creating || !form.head || !form.base || form.head === form.base) { setPreview(null); return }
-    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/compare?base=${encodeURIComponent(form.base)}&head=${encodeURIComponent(form.head)}`)
-      .then((d) => setPreview(d && d.commits ? d : null))
-  }, [creating, form.head, form.base, repo.owner, repo.name])
   useEffect(reload, [reload])
   useEffect(() => {
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/overview`).then((d) => {
       setBranches(d.branches || [])
       setForm((f) => ({ ...f, base: d.defaultBranch || 'master' }))
     })
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/labels`).then((d) => setMeta((m) => ({ ...m, labels: Array.isArray(d) ? d : [] })))
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/milestones`).then((d) => setMeta((m) => ({ ...m, milestones: Array.isArray(d) ? d : [] })))
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/collaborators`).then((d) => setMeta((m) => ({ ...m, collabs: Array.isArray(d) ? d : [] })))
   }, [repo.owner, repo.name])
+  useEffect(() => {
+    if (!creating || !form.head || !form.base || form.head === form.base) { setPreview(null); return }
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/compare?base=${encodeURIComponent(form.base)}&head=${encodeURIComponent(form.head)}`)
+      .then((d) => setPreview(d && d.commits ? d : null))
+  }, [creating, form.head, form.base, repo.owner, repo.name])
   useEffect(() => {
     if (preset) {
       setCreating(true)
@@ -1287,10 +1297,97 @@ function Pulls({ repo, t, preset, onPresetDone, onGoIssuesSub }) {
   }, [preset])
   if (openIdx !== null) return h(PullDetail, { repo, idx: openIdx, t, onBack: () => { setOpenIdx(null); reload() } })
   if (list === null) return h('div', { className: 'dgs-empty' }, t('loading'))
-  const state = 'open'
-  const [st, setSt] = [null, null]
   const openCount = list.filter((x) => x.state === 'open').length
   const closedCount = list.filter((x) => x.state !== 'open').length
+  let shown = list.filter((x) => state === 'open' ? x.state === 'open' : x.state !== 'open')
+  if (flt.label) shown = shown.filter((x) => (x.labels || []).some((l) => String(l.id) === String(flt.label)))
+  if (flt.milestone) shown = shown.filter((x) => x.milestone && String(x.milestone.id) === String(flt.milestone))
+  if (flt.assignee) shown = shown.filter((x) => x.assignee === flt.assignee)
+  shown = [...shown].sort((a, b) => {
+    const at = (a.updatedAt || 0) * 1000; const bt = (b.updatedAt || 0) * 1000
+    return sort === 'latest' ? bt - at : sort === 'oldest' ? at - bt : (b.comments || 0) - (a.comments || 0)
+  })
+  const fltSel = (key, items, blank) => h('select', {
+    key: key, className: 'dgs-input', style: { maxWidth: 130, flex: 'none', width: 'auto', padding: '5px 8px', marginLeft: 8 },
+    value: flt[key], onChange: (e) => setFlt({ ...flt, [key]: e.target.value }),
+  }, h('option', { value: '' }, blank),
+    items.map((x) => h('option', { key: x.id || x.name, value: String(x.id || x.name) }, x.name)))
+  const row = (x) => h('div', { key: x.index, className: 'dgs-issue', style: { cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }, onClick: () => setOpenIdx(x.index) },
+    h('span', { className: 'dgs-issue-num' + (x.state !== 'open' ? ' closed' : '') }, '#' + x.index),
+    h('div', { style: { flex: 1, minWidth: 0 } },
+      h('div', { className: 'dgs-row', style: { gap: 6 } },
+        h('span', { className: 'dgs-issue-title' }, x.title),
+        (x.labels || []).map((l) => h('span', { key: l.id, className: 'dgs-badge', style: { background: (l.color || '#70c24a') + '33', borderColor: l.color || '#70c24a' } }, l.name)),
+        x.milestone ? h('span', { className: 'dgs-badge' }, '◆ ' + x.milestone.title) : null,
+        x.state === 'merged' ? h('span', { className: 'dgs-badge' }, '已合并') : null),
+      h('div', { className: 'dgs-sub', style: { marginTop: 2 } },
+        '由 ' + (x.author || '') + ' 于 ' + timeAgo((x.updatedAt || 0) * 1000 || x.updatedAt) + ' 发起 · ' + x.head + ' → ' + x.base)),
+    h('span', { className: 'dgs-sub', style: { flex: 'none' } }, (x.comments != null ? '💬 ' + x.comments : '')))
+  const toggleLabel = (id) => setSel((x) => {
+    const next = new Set(x.labels)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return { ...x, labels: next }
+  })
+  const createSide = h('div', null,
+    h('div', { className: 'dgs-side-block' },
+      h('div', { className: 'dgs-side-title' }, '标签 ⚙'),
+      meta.labels.length === 0 ? h('div', { className: 'dgs-sub' }, '未选择标签') : null,
+      meta.labels.map((l) => h('label', { key: l.id, className: 'dgs-sub', style: { display: 'flex', gap: 6, alignItems: 'center', margin: '4px 0', cursor: 'pointer' } },
+        h('input', { type: 'checkbox', checked: sel.labels.has(l.id), onChange: () => toggleLabel(l.id) }),
+        h('span', { className: 'dgs-badge', style: { background: (l.color || '#70c24a') + '33' } }, l.name)))),
+    h('div', { className: 'dgs-side-block' },
+      h('div', { className: 'dgs-side-title' }, '里程碑 ⚙'),
+      h('select', { className: 'dgs-input', style: { width: '100%' }, value: sel.milestone, onChange: (e) => setSel({ ...sel, milestone: e.target.value }) },
+        h('option', { value: '' }, '未选择里程碑'),
+        meta.milestones.map((m) => h('option', { key: m.id, value: m.id }, m.title + (m.closed ? ' ✓' : ''))))),
+    h('div', { className: 'dgs-side-block' },
+      h('div', { className: 'dgs-side-title' }, '指派成员 ⚙'),
+      h('select', { className: 'dgs-input', style: { width: '100%' }, value: sel.assignee, onChange: (e) => setSel({ ...sel, assignee: e.target.value }) },
+        h('option', { value: '' }, '未指派成员'),
+        meta.collabs.map((u) => h('option', { key: u.name, value: u.name }, u.name)))))
+  const createForm = h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
+    h('div', { className: 'dgs-row', style: { marginBottom: 8 } },
+      h('span', { style: { fontWeight: 700 } }, '对比文件变化'),
+      h('span', { style: { flex: 1 } }),
+      h('button', { className: 'dgs-btn ghost', onClick: () => setCreating(false) }, t('back'))),
+    h('div', { className: 'dgs-sub', style: { marginBottom: 8 } }, '对比两个分支间的文件变化并发起一个合并请求。'),
+    h('div', { className: 'dgs-issue-layout' },
+      h('div', { className: 'dgs-issue-main' },
+        h('div', { className: 'dgs-row', style: { marginBottom: 8 } },
+          h('select', { className: 'dgs-input', style: { maxWidth: 170, flex: 'none', width: 'auto' }, value: form.base, onChange: (e) => setForm({ ...form, base: e.target.value }) },
+            branches.map((b) => h('option', { key: b, value: b }, '基准分支: ' + b))),
+          h('span', { className: 'dgs-sub' }, '…'),
+          h('select', { className: 'dgs-input', style: { maxWidth: 170, flex: 'none', width: 'auto' }, value: form.head, onChange: (e) => setForm({ ...form, head: e.target.value }) },
+            h('option', { value: '' }, '对比分支…'),
+            branches.map((b) => h('option', { key: b, value: b }, '对比分支: ' + b)))),
+        h('input', { className: 'dgs-input', placeholder: '标题', value: form.title, onChange: (e) => setForm({ ...form, title: e.target.value }) }),
+        h('div', { className: 'dgs-row', style: { margin: '8px 0 4px' } },
+          h('button', { className: 'dgs-subtab' + (!previewMode ? ' active' : ''), onClick: () => setPreviewMode(false) }, '内容编辑'),
+          h('button', { className: 'dgs-subtab' + (previewMode ? ' active' : ''), onClick: () => {
+            setPreviewMode(true)
+            api('POST', '/dsh/markdown', { text: form.body }).then((d) => setPreviewHtml(d.html || ''))
+          } }, '效果预览')),
+        previewMode ? h('div', { className: 'dgs-md', style: { minHeight: 120, border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 8, padding: 12 } },
+          form.body ? h('div', { dangerouslySetInnerHTML: { __html: previewHtml } }) : h('span', { className: 'dgs-sub' }, '暂无内容'))
+          : h('textarea', { className: 'dgs-input', style: { minHeight: 120 }, placeholder: '内容', value: form.body, onChange: (e) => setForm({ ...form, body: e.target.value }) }),
+        preview ? h('div', { className: 'dgs-card', style: { margin: '8px 0', padding: 10 } },
+          h('div', { className: 'dgs-sub', style: { marginBottom: 6 } }, `${preview.commits.length} commits`),
+          h('pre', { className: 'dgs-file' }, preview.diffStat || '—')) : null,
+        h('div', { className: 'dgs-row', style: { marginTop: 10, justifyContent: 'flex-end' } },
+          h('button', { className: 'dgs-btn', disabled: busy || !form.title.trim() || !form.head,
+            onClick: async () => {
+              setBusy(true); setMsg('')
+              const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/pulls`, {
+                ...form,
+                labels: [...sel.labels].map(Number),
+                milestone: sel.milestone ? Number(sel.milestone) : undefined,
+                assignee: sel.assignee || undefined,
+              })
+              setBusy(false)
+              if (d.ok) { setCreating(false); setForm({ title: '', head: '', base: form.base, body: '' }); setSel({ labels: new Set(), milestone: '', assignee: '' }); reload() }
+              else setMsg(d.error || 'failed')
+            } }, '创建合并请求'))),
+      h('div', { className: 'dgs-issue-side' }, createSide)))
   return h('div', null,
     h('div', { className: 'dgs-row', style: { margin: '0 0 12px' } },
       h('a', { style: { cursor: 'pointer', marginRight: 18, fontSize: 13, color: 'var(--dsw-alias-label-secondary)' }, onClick: () => { if (onGoIssuesSub) onGoIssuesSub('labels') } }, '标签管理'),
@@ -1298,41 +1395,18 @@ function Pulls({ repo, t, preset, onPresetDone, onGoIssuesSub }) {
       h('span', { style: { flex: 1 } }),
       h('button', { className: 'dgs-btn', onClick: () => setCreating(!creating) }, '创建合并请求')),
     h('div', { className: 'dgs-row', style: { margin: '0 0 12px' } },
-      h('button', { className: 'dgs-pill' + (true ? ' active' : '') }, '⊘ ' + openCount + ' 个开启中'),
-      h('button', { className: 'dgs-pill closed' }, '✓ ' + closedCount + ' 个已关闭')),
+      h('button', { className: 'dgs-pill' + (state === 'open' ? ' active' : ''), onClick: () => setState('open') }, '⊘ ' + openCount + ' 个开启中'),
+      h('button', { className: 'dgs-pill closed' + (state === 'closed' ? ' active' : ''), onClick: () => setState('closed') }, '✓ ' + closedCount + ' 个已关闭'),
+      h('span', { style: { flex: 1 } }),
+      fltSel('label', meta.labels, '标签筛选'),
+      fltSel('milestone', meta.milestones, '里程碑筛选'),
+      fltSel('assignee', meta.collabs, '指派人筛选'),
+      h('select', { key: 'sort', className: 'dgs-input', style: { maxWidth: 130, flex: 'none', width: 'auto', padding: '5px 8px', marginLeft: 8 }, value: sort, onChange: (e) => setSort(e.target.value) },
+        [['latest', '最新'], ['oldest', '最旧'], ['mostcomment', '最多评论']].map(([v, label]) => h('option', { key: v, value: v }, '排序: ' + label)))),
     msg ? h('div', { className: 'dgs-err' }, msg) : null,
-    creating ? h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
-      h('div', { className: 'dgs-row', style: { marginBottom: 8 } },
-        h('input', { className: 'dgs-input', placeholder: t('issueTitle'), value: form.title, onChange: (e) => setForm({ ...form, title: e.target.value }) }),
-        h('select', { className: 'dgs-input', style: { maxWidth: 140 }, value: form.head, onChange: (e) => setForm({ ...form, head: e.target.value }) },
-          h('option', { value: '' }, t('pulls') + ' ←'),
-          branches.map((b) => h('option', { key: b, value: b }, b))),
-        h('span', { className: 'dgs-sub' }, t('headToBase')),
-        h('select', { className: 'dgs-input', style: { maxWidth: 140 }, value: form.base, onChange: (e) => setForm({ ...form, base: e.target.value }) },
-          branches.map((b) => h('option', { key: b, value: b }, b)))),
-      h('textarea', { className: 'dgs-input', placeholder: t('issueBody'), value: form.body, onChange: (e) => setForm({ ...form, body: e.target.value }) }),
-      preview ? h('div', { className: 'dgs-card', style: { margin: '8px 0', padding: 10 } },
-        h('div', { className: 'dgs-sub', style: { marginBottom: 6 } }, `${preview.commits.length} commits`),
-        h('pre', { className: 'dgs-file' }, preview.diffStat || '—')) : null,
-      h('div', { className: 'dgs-row', style: { marginTop: 8 } },
-        h('button', { className: 'dgs-btn', disabled: busy || !form.title.trim() || !form.head,
-          onClick: async () => {
-            setBusy(true); setMsg('')
-            const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/pulls`, form)
-            setBusy(false)
-            if (d.ok) { setCreating(false); reload() } else setMsg(d.error || 'failed')
-          } }, t('submit')))) : null,
-    list.length === 0 && !creating ? h('div', { className: 'dgs-empty' }, t('noPulls')) : null,
-    list.map((p) =>
-        h('div', { key: p.index, className: 'dgs-issue', style: { cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }, onClick: () => setOpenIdx(p.index) },
-          h('span', { className: 'dgs-issue-num' + (p.state !== 'open' ? ' closed' : '') }, '#' + p.index),
-          h('div', { style: { flex: 1, minWidth: 0 } },
-            h('div', { className: 'dgs-row', style: { gap: 6 } },
-              h('span', { className: 'dgs-issue-title' }, p.title),
-              p.state === 'merged' ? h('span', { className: 'dgs-badge' }, '已合并') : null),
-            h('div', { className: 'dgs-sub', style: { marginTop: 2 } },
-              '由 ' + (p.author || '') + ' 于 ' + timeAgo((p.updatedAt || 0) * 1000 || p.updatedAt) + ' 发起 · ' + p.head + ' → ' + p.base)),
-          h('span', { className: 'dgs-sub', style: { flex: 'none' } }, (p.comments != null ? '💬 ' + p.comments : '')))))
+    creating ? createForm : null,
+    shown.length === 0 && !creating ? h('div', { className: 'dgs-empty' }, t('noPulls')) : null,
+    shown.map(row))
 }
 
 function PullDetail({ repo, idx, t, onBack }) {

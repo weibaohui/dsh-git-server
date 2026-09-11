@@ -129,16 +129,29 @@ export function registerDshRoutes(m) {
         const ar = authRepo(c);
         if (!ar)
             return;
-        const rows = db.db().prepare(`SELECT i.id, i."index", i.name AS title, i.is_closed, i.created_unix, i.updated_unix,
-              pr.head_branch, pr.base_branch, pr.has_merged, u.name AS author
+        const rows = db.db().prepare(`SELECT i.id, i."index", i.name AS title, i.is_closed, i.num_comments, i.created_unix, i.updated_unix,
+              pr.head_branch, pr.base_branch, pr.has_merged, u.name AS author,
+              ms.id AS msId, ms.name AS msTitle, au.name AS assignee
        FROM issue i JOIN pull_request pr ON pr.issue_id = i.id
        LEFT JOIN user u ON u.id = i.poster_id
+       LEFT JOIN milestone ms ON ms.id = i.milestone_id
+       LEFT JOIN user au ON au.id = i.assignee_id
        WHERE i.repo_id = ? ORDER BY i."index" DESC LIMIT 50`).all(ar.repo.id);
+        const labelMap = {};
+        if (rows.length) {
+            const marks = rows.map(() => '?').join(',');
+            const ls = db.db().prepare(`SELECT il.issue_id, l.id, l.name, l.color FROM issue_label il JOIN label l ON l.id = il.label_id WHERE il.issue_id IN (${marks})`).all(...rows.map((r) => r.id));
+            for (const x of ls)
+                (labelMap[x.issue_id] = labelMap[x.issue_id] || []).push({ id: x.id, name: x.name, color: x.color });
+        }
         c.JSONSuccess(rows.map((r) => ({
             index: r.index, title: r.title,
             state: r.has_merged ? 'merged' : (r.is_closed ? 'closed' : 'open'),
             head: r.head_branch, base: r.base_branch, author: r.author,
-            updatedAt: r.updated_unix,
+            updatedAt: r.updated_unix, comments: r.num_comments || 0,
+            labels: labelMap[r.id] || [],
+            milestone: r.msId ? { id: r.msId, title: r.msTitle } : null,
+            assignee: r.assignee || '',
         })));
     });
     // ── PR 创建 ───────────────────────────────────────────────────
@@ -163,6 +176,15 @@ export function registerDshRoutes(m) {
          VALUES (?,?,?,?,?,0,1,0,?,?)`).run(repo.id, index, user.id, title, String(body.body ?? ''), now, now);
             const issueID = Number(info.lastInsertRowid);
             db.db().prepare('INSERT INTO issue_user (uid, issue_id, repo_id, is_poster, is_read) VALUES (?,?,?,1,1)').run(user.id, issueID, repo.id);
+            if (Array.isArray(body.labels)) {
+                for (const lid of body.labels)
+                    db.db().prepare('INSERT OR IGNORE INTO issue_label (issue_id, label_id) VALUES (?,?)').run(issueID, Number(lid));
+            }
+            if (body.milestone || body.assignee) {
+                const au = body.assignee ? db.getUserByUsername(String(body.assignee)) : null;
+                db.db().prepare('UPDATE issue SET milestone_id = ?, assignee_id = ? WHERE id = ?')
+                    .run(Number(body.milestone) || 0, au ? au.id : 0, issueID);
+            }
             const headDir = repo.RepoPath();
             const mergeBase = (await git.mergeBase(headDir, base, head)) ?? '';
             const patch = await git.git(headDir, 'diff', '--full-index', '--binary', '--end-of-options', mergeBase || base, head);

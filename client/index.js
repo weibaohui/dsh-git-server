@@ -139,6 +139,14 @@ textarea.dgs-input{min-height:72px;resize:vertical}
 .dgs-md blockquote{border-left:3px solid var(--dsw-alias-border-l2);margin:8px 0;padding:2px 12px;color:var(--dsw-alias-label-secondary)}
 .dgs-md table{border-collapse:collapse}
 .dgs-md td,.dgs-md th{border:1px solid var(--dsw-alias-border-l2);padding:4px 10px}
+.dsh-git-entry{display:flex;align-items:center;gap:8px;width:100%;height:34px;padding:0 10px;margin:2px 0 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary,var(--dsw-text-primary,inherit));font:inherit;font-size:13px;cursor:pointer;text-align:left}
+.dsh-git-entry:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent)}
+.dsh-git-entry .dsh-git-entry-icon{flex:none;line-height:1}
+.dsh-git-entry .dsh-git-entry-mark{flex:none;width:16px;height:16px;border-radius:5px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);display:inline-block}
+.dsh-git-entry .dsh-git-entry-stats{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--dsw-alias-label-secondary,var(--dsw-text-secondary,gray));font-variant-numeric:tabular-nums;white-space:nowrap}
+.dsh-git-entry .dsh-git-entry-dot{width:6px;height:6px;border-radius:6px;background:var(--dsw-alias-state-success-primary);display:inline-block}
+[data-sidebar-collapsed] .dsh-git-entry,[class*="_collapsed"] .dsh-git-entry{width:36px;height:36px;min-width:36px;margin:0 0 12px;padding:0;justify-content:center;gap:0;text-align:center}
+[data-sidebar-collapsed] .dsh-git-entry .dsh-git-entry-label,[data-sidebar-collapsed] .dsh-git-entry .dsh-git-entry-stats,[class*="_collapsed"] .dsh-git-entry .dsh-git-entry-label,[class*="_collapsed"] .dsh-git-entry .dsh-git-entry-stats{display:none}
 </style>`
   document.head.appendChild(holder)
 }
@@ -1107,6 +1115,125 @@ function SettingsSection({ t }) {
         h('button', { className: 'dgs-btn', disabled: busy, onClick: save }, '保存'))))
 }
 
+// ── 侧栏导航条目（工艺库/知识库下方，dsh-kb 同款 DOM 注入）───────────────
+
+const GIT_ENTRY_ATTR = 'data-dsh-git-entry'
+
+let gitPageHost = null
+function closeGitPage() {
+  if (!gitPageHost) return
+  try { gitPageHost.root.unmount() } catch {}
+  try { gitPageHost.el.remove() } catch {}
+  gitPageHost = null
+}
+function openGitPage(t) {
+  if (gitPageHost) { closeGitPage(); return }
+  fetch(API + '/status').then((r) => r.json()).then((status) => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const root = require('react-dom/client').createRoot(el)
+    gitPageHost = { el, root }
+    root.render(h(GitPage, {
+      onClose: closeGitPage,
+      t,
+      kernelUrl: status && status.running ? (location.protocol + '//' + location.hostname + ':' + (status.port || 3400)) : null,
+    }))
+  }).catch(() => {})
+}
+
+function gitSidebarRoot() {
+  const column = document.querySelector('[data-pane="sidebar"], [class*="sidebarCol"], .dshDesktopUpstreamSidebar, .dshDesktopSidebarSurface')
+  if (column === null) return undefined
+  const logoOwner = column.querySelector('[class*="logoRow"]') && column.querySelector('[class*="logoRow"]').parentElement
+  return logoOwner || (column.firstElementChild || undefined)
+}
+
+function gitNewSessionButton(root) {
+  const nested = root.querySelector('button[class*="newSession"]')
+  if (nested) return nested
+  for (const child of root.children) {
+    if (child instanceof HTMLButtonElement && !child.matches('[' + GIT_ENTRY_ATTR + ']')) return child
+  }
+  return Array.from(root.querySelectorAll('button')).find((b) => !b.matches('[' + GIT_ENTRY_ATTR + ']') && /新会话|新建会话|new session/i.test(b.textContent || ''))
+}
+
+function placeGitEntry(root, entry) {
+  const button = gitNewSessionButton(root)
+  if (!button) return false
+  if (entry.parentElement !== root) {
+    const family = Array.from(root.children).filter((el) => el instanceof HTMLElement
+      && el.matches('[data-dsh-prc-entry],[data-dsh-atb-entry],[data-dsh-taskboard-entry],[data-dsh-ssh-entry],[data-dsh-kb-entry],[' + GIT_ENTRY_ATTR + ']'))
+    if (family.length > 0) {
+      const last = family[family.length - 1]
+      last.parentElement.insertBefore(entry, last.nextSibling)
+    } else {
+      const row = button.closest('[class*="logoRow"]')
+      const base = (row && row.parentElement === root) ? row : button
+      root.insertBefore(entry, base.nextSibling)
+    }
+  }
+  return true
+}
+
+function mountGitSidebarEntry(t) {
+  let style = document.getElementById('dsh-git-sidebar-style')
+  if (!style) {
+    style = document.createElement('style')
+    style.id = 'dsh-git-sidebar-style'
+    style.textContent = `
+.dsh-git-entry{display:flex;align-items:center;gap:8px;width:100%;height:34px;padding:0 10px;margin:2px 0 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary,var(--dsw-text-primary,inherit));font:inherit;font-size:13px;cursor:pointer;text-align:left}
+.dsh-git-entry:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent)}
+.dsh-git-entry .dsh-git-entry-mark{flex:none;width:16px;height:16px;border-radius:5px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);display:inline-block}
+.dsh-git-entry .dsh-git-entry-stats{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--dsw-alias-label-secondary,var(--dsw-text-secondary,gray));font-variant-numeric:tabular-nums;white-space:nowrap}
+.dsh-git-entry .dsh-git-entry-dot{width:6px;height:6px;border-radius:6px;background:var(--dsw-alias-state-success-primary);display:inline-block}
+[data-sidebar-collapsed] .dsh-git-entry,[class*="_collapsed"] .dsh-git-entry{width:36px;height:36px;min-width:36px;margin:0 0 12px;padding:0;justify-content:center;gap:0;text-align:center}
+[data-sidebar-collapsed] .dsh-git-entry .dsh-git-entry-label,[data-sidebar-collapsed] .dsh-git-entry .dsh-git-entry-stats,[class*="_collapsed"] .dsh-git-entry .dsh-git-entry-label,[class*="_collapsed"] .dsh-git-entry .dsh-git-entry-stats{display:none}
+`
+    document.head.appendChild(style)
+  }
+  const entry = document.createElement('button')
+  entry.type = 'button'
+  entry.setAttribute(GIT_ENTRY_ATTR, '')
+  entry.className = 'dsh-git-entry'
+  entry.title = 'Git — 仓库 / 工单 / PR / Wiki / 发版'
+  entry.innerHTML = '<span class="dsh-git-entry-mark"></span><span class="dsh-git-entry-label">Git</span><span class="dsh-git-entry-stats"></span>'
+  entry.addEventListener('click', () => openGitPage(t))
+  const stats = entry.querySelector('.dsh-git-entry-stats')
+  const refreshStats = () => {
+    fetch(API + '/me').then((r) => r.json()).then((d) => {
+      if (stats && d && Array.isArray(d.repos)) stats.textContent = String(d.repos.length)
+    }).catch(() => {})
+  }
+  refreshStats()
+  const poll = setInterval(refreshStats, 30000)
+  let root
+  let placed = false
+  const rootObserver = new MutationObserver(() => {
+    if (!root || !root.isConnected) { placed = false; tryPlace(); return }
+    if (!root.contains(entry)) placed = placeGitEntry(root, entry)
+  })
+  const tryPlace = () => {
+    if (root && !root.isConnected) { rootObserver.disconnect(); root = undefined; placed = false }
+    if (placed) { if (document.body.contains(entry)) return; rootObserver.disconnect(); root = undefined; placed = false }
+    root = root || gitSidebarRoot()
+    if (!root) return
+    placed = placeGitEntry(root, entry)
+    if (placed) rootObserver.observe(root, { childList: true })
+  }
+  const waitObserver = new MutationObserver(() => tryPlace())
+  waitObserver.observe(document.body, { childList: true, subtree: true })
+  const retry = setInterval(tryPlace, 2000)
+  tryPlace()
+  return () => {
+    clearInterval(retry)
+    clearInterval(poll)
+    waitObserver.disconnect()
+    rootObserver.disconnect()
+    try { entry.remove() } catch {}
+    closeGitPage()
+  }
+}
+
 // ── utils ─────────────────────────────────────────────────────────────────
 
 function fmtSize(n) {
@@ -1146,27 +1273,7 @@ module.exports = {
       }
     } catch (e) { try { console.error('[dsh-git-server] locale init:', e) } catch {} }
 
-    ctx.effect(() => {
-      try {
-        ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register(
-          { name: 'sidebar.footer.action', id: CLIENT_NAME, order: 98 },
-          function GitEntry() {
-            const [open, setOpen] = useState(false)
-            const [status, setStatus] = useState(null)
-            useEffect(() => { fetch(API + '/status').then((r) => r.json()).then(setStatus).catch(() => {}) }, [])
-            return h('div', { style: { display: 'contents' } },
-              h('button', { className: 'dgs-btn ghost', style: { width: '100%', display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center' },
-                onClick: () => setOpen(true) },
-                h('span', { className: 'dgs-mark', style: { width: 14, height: 14 } }), t('nav'),
-                status && status.running ? h('span', { style: { width: 7, height: 7, borderRadius: 9, background: 'var(--dsw-alias-state-success-primary)', display: 'inline-block' } }) : null),
-              open && h(GitPage, {
-                onClose: () => setOpen(false),
-                t,
-                kernelUrl: status && status.running ? (location.protocol + '//' + location.hostname + ':' + (status.port || 3400)) : null,
-              }))
-          }))
-      } catch (e) { (globalThis.__skErrors = globalThis.__skErrors || []).push('sidebar:' + (e && e.message)); throw e }
-    }, 'dsh-git-server: sidebar entry')
+    ctx.effect(() => mountGitSidebarEntry(t), 'dsh-git-server: sidebar entry')
 
     ctx.effect(() => {
       try {

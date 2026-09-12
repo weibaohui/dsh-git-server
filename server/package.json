@@ -17,12 +17,10 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@types/qrcode": "^1.5.6",
     "better-sqlite3": "^11.10.0",
     "busboy": "^1.6.0",
     "ini": "^5.0.0",
-    "marked": "^15.0.0",
-    "qrcode": "^1.5.4"
+    "marked": "^15.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

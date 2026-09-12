@@ -171,7 +171,7 @@ function ensureDeps({ logger = () => {} } = {}) {
     const { createRequire } = require('node:module')
     probe = createRequire(path.join(SERVER_DIR, 'dist', 'index.js'))
   } catch {}
-  const critical = ['better-sqlite3', 'marked', 'ini', 'busboy', 'qrcode']
+  const critical = ['better-sqlite3', 'marked', 'ini', 'busboy']
   const missing = []
   for (const name of critical) {
     try { probe && probe.resolve(name) } catch { missing.push(name) }

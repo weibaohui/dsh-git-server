@@ -1628,13 +1628,16 @@ function WikiView({ repo, t }) {
             } }, t('submit'))))
       : h('div', { className: 'dgs-row', style: { alignItems: 'flex-start' } },
         h('div', { style: { width: 180, flex: 'none' } },
-          h('div', { style: { fontWeight: 700, margin: '4px 0 8px' } }, t('wiki')),
           pages === null ? h('div', { className: 'dgs-sub' }, t('loading'))
             : pages.length === 0 ? h('div', { className: 'dgs-sub' }, t('noWiki'))
             : h('div', null, pages.map((p) =>
                 h('div', { key: p.name, className: 'dgs-crumb', style: { padding: '3px 0' }, onClick: () => openPage(p.name) }, p.name)))),
         h('div', { style: { flex: 1, minWidth: 0, paddingLeft: 16 } },
-          page === null ? h('div', { className: 'dgs-empty' }, pages && pages.length ? '← ' + t('wiki') : t('noWiki'))
+          page === null ? h('div', { className: 'dgs-card', style: { margin: '40px auto', maxWidth: 460, textAlign: 'center', padding: '36px 20px' } },
+            h('div', { style: { fontSize: 34, marginBottom: 10 } }, '📖'),
+            h('div', { style: { fontWeight: 700, fontSize: 16, marginBottom: 8 } }, '欢迎使用 Wiki！'),
+            h('div', { className: 'dgs-sub' }, 'Wiki 是用于共同协作文档的地方，清晰的文档可以帮助其他人深入了解您的项目。'),
+            pages && pages.length ? h('div', { className: 'dgs-sub', style: { marginTop: 10 } }, '← 从左侧选择页面') : null)
           : editing ? h('div', null,
               h('div', { className: 'dgs-row', style: { margin: '4px 0 8px' } },
                 h('span', { style: { fontWeight: 600 } }, page.name + '.md'),
@@ -1935,33 +1938,80 @@ function UserProfile({ name, t }) {
 // ── 管理面板 ───────────────────────────────────────────────────────────────
 
 function Admin({ t }) {
-  const [tab, setTab] = useState('summary')
+  const [sub, setSub] = useState('panel')
+  const [info, setInfo] = useState(null)
   const [data, setData] = useState(null)
+  const [op, setOp] = useState('')
+  const [opMsg, setOpMsg] = useState('')
+  const [busy, setBusy] = useState(false)
   useEffect(() => {
-    if (tab === 'summary') api('GET', '/dsh/admin/summary').then((d) => setData(d))
-    if (tab === 'users') api('GET', '/dsh/admin/users').then((d) => setData(d))
-    if (tab === 'repos') api('GET', '/dsh/admin/repos').then((d) => setData(d))
-  }, [tab])
-  return h('div', null,
-    h('div', { className: 'dgs-tabs' },
-      [['summary', '概况'], ['users', '用户'], ['repos', '仓库']].map(([k, label]) =>
-        h('button', { key: k, className: 'dgs-tab' + (tab === k ? ' active' : ''), onClick: () => setTab(k) }, label))),
-    data === null ? h('div', { className: 'dgs-empty' }, t('loading')) : null,
-    tab === 'summary' && data ? h('div', { className: 'dgs-card' },
-      Object.entries(data).map(([k, v]) => h('div', { key: k, className: 'dgs-row' },
-        h('span', { style: { flex: 1 } }, k), h('span', { className: 'dgs-sub' }, String(v))))) : null,
-    tab === 'users' && Array.isArray(data) ? h('div', { className: 'dgs-card' },
-      data.map((u) => h('div', { key: u.name, className: 'dgs-row' },
-        h('a', { className: 'dgs-name', href: '#/u/' + u.name }, u.name),
-        u.isAdmin ? h('span', { className: 'dgs-badge ok' }, 'admin') : null,
-        h('span', { style: { flex: 1 } }),
-        h('span', { className: 'dgs-sub' }, u.email || '')))) : null,
-    tab === 'repos' && Array.isArray(data) ? h('div', { className: 'dgs-card' },
-      data.map((r) => h('div', { key: r.name, className: 'dgs-row' },
-        h('a', { className: 'dgs-name', href: '#/r/' + r.name }, r.name),
-        r.private ? h('span', { className: 'dgs-badge pri' }, t('private')) : null,
-        h('span', { style: { flex: 1 } }),
-        h('span', { className: 'dgs-sub' }, '★ ' + r.stars)))) : null)
+    api('GET', '/dsh/admin/sysinfo').then((d) => setInfo(d))
+    api('GET', '/dsh/admin/summary').then((d) => setData((x) => ({ ...(x || {}), summary: d })))
+    api('GET', '/dsh/admin/users').then((d) => setData((x) => ({ ...(x || {}), users: d })))
+    api('GET', '/dsh/admin/repos').then((d) => setData((x) => ({ ...(x || {}), repos: d })))
+    api('GET', '/dsh/admin/orgs').then((d) => setData((x) => ({ ...(x || {}), orgs: d })))
+  }, [])
+  const navItem = (k, label) => h('span', { key: k, className: 'item' + (sub === k ? ' active' : ''), onClick: () => setSub(k) }, label)
+  const card = (title, ...children) => h('div', { className: 'dgs-card', style: { marginBottom: 12 } },
+    h('div', { style: { fontWeight: 700, marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid var(--dsw-alias-border-l2)' } }, title),
+    ...children)
+  const kv = (k, v) => h('div', { key: k, className: 'dgs-row' },
+    h('span', { style: { flex: 1 } }, k), h('span', { className: 'dgs-sub' }, String(v)))
+  const summary = data && data.summary
+  const panel = h('div', null,
+    info ? card('构建信息',
+      kv('应用程序版本', info.version),
+      kv('Git 版本', info.gitVersion),
+      kv('Node 版本', info.nodeVersion),
+      kv('服务运行时间', Math.floor(info.uptimeSec / 3600) + ' 小时 ' + Math.floor((info.uptimeSec % 3600) / 60) + ' 分钟')) : null,
+    summary ? card('应用统计数据',
+      h('div', { className: 'dgs-sub' },
+        `数据库统计：${summary.users} 位用户，${summary.orgs} 个组织，${summary.repos} 个仓库，${summary.issues} 张工单，${summary.pulls} 个合并请求。`)) : null,
+    info ? card('系统监视状态',
+      kv('RSS 内存', (info.mem.rss / 1048576).toFixed(1) + ' MB'),
+      kv('Heap 已用', (info.mem.heapUsed / 1048576).toFixed(1) + ' MB'),
+      kv('Heap 总量', (info.mem.heapTotal / 1048576).toFixed(1) + ' MB')) : null,
+    card('管理员操作',
+      h('div', { className: 'dgs-row' },
+        h('select', { className: 'dgs-input', value: op, onChange: (e) => setOp(e.target.value) },
+          h('option', { value: '' }, '请选择要运行的操作'),
+          h('option', { value: 'sync_hooks' }, '同步所有仓库的 Git 钩子'),
+          h('option', { value: 'gc' }, '对所有仓库运行垃圾回收 (git gc)')),
+        h('button', { className: 'dgs-btn', disabled: busy || !op, onClick: async () => {
+          setBusy(true); setOpMsg('')
+          const d = await api('POST', '/dsh/admin/ops', { op })
+          setBusy(false)
+          setOpMsg(d && d.ok ? `✓ 完成（${d.n} 个仓库）` : (d && d.error) || '失败')
+        } }, '执行')),
+      opMsg ? h('div', { className: 'dgs-sub', style: { marginTop: 8 } }, opMsg) : null))
+  const usersTab = data && data.users ? card('用户管理',
+    h('table', { className: 'dgs-table' },
+      h('tbody', null, data.users.map((u) =>
+        h('tr', { key: u.name },
+          h('td', null, h('a', { className: 'dgs-name', href: '#/u/' + u.name }, u.name), u.isAdmin ? h('span', { className: 'dgs-badge ok', style: { marginLeft: 8 } }, 'admin') : null),
+          h('td', { className: 'dgs-sub' }, u.email || ''),
+          h('td', { className: 'dgs-sub', style: { textAlign: 'right' } }, timeAgo((u.created || 0) * 1000))))))) : h('div', { className: 'dgs-empty' }, t('loading'))
+  const reposTab = data && data.repos ? card('仓库管理',
+    h('table', { className: 'dgs-table' },
+      h('tbody', null, data.repos.map((r) =>
+        h('tr', { key: r.name },
+          h('td', null, h('a', { className: 'dgs-name', href: '#/r/' + r.name }, r.name), r.private ? h('span', { className: 'dgs-badge pri', style: { marginLeft: 8 } }, '私有') : null),
+          h('td', { className: 'dgs-sub', style: { textAlign: 'right' } }, '★ ' + r.stars)))))) : h('div', { className: 'dgs-empty' }, t('loading'))
+  const orgsTab = data && data.orgs ? card('组织管理',
+    data.orgs.length === 0 ? h('div', { className: 'dgs-sub' }, '—')
+      : h('table', { className: 'dgs-table' },
+          h('tbody', null, data.orgs.map((o) =>
+            h('tr', { key: o.name },
+              h('td', null, h('a', { className: 'dgs-name', href: '#/org/' + o.name }, o.name), o.fullName ? h('span', { className: 'dgs-sub', style: { marginLeft: 8 } }, o.fullName) : null),
+              h('td', { className: 'dgs-sub', style: { textAlign: 'right' } }, timeAgo(o.created * 1000))))))) : h('div', { className: 'dgs-empty' }, t('loading'))
+  return h('div', { className: 'dgs-settings-layout' },
+    h('div', { className: 'dgs-settings-nav' },
+      navItem('panel', '控制面板'),
+      navItem('users', '用户管理'),
+      navItem('repos', '仓库管理'),
+      navItem('orgs', '组织管理')),
+    h('div', { style: { flex: 1, minWidth: 0 } },
+      sub === 'panel' ? panel : sub === 'users' ? usersTab : sub === 'repos' ? reposTab : orgsTab))
 }
 
 // ── 主页（仓库列表 + 建仓） ────────────────────────────────────────────────
@@ -2215,7 +2265,9 @@ function fmtDate(s) {
   try { return new Date(s).toLocaleString() } catch { return s }
 }
 function timeAgo(ms) {
-  const sec = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+  const t = typeof ms === 'string' ? new Date(ms).getTime() : ms
+  if (!t || Number.isNaN(t)) return ''
+  const sec = Math.max(0, Math.floor((Date.now() - t) / 1000))
   if (sec < 60) return '刚刚'
   if (sec < 3600) return Math.floor(sec / 60) + ' 分钟之前'
   if (sec < 86400) return Math.floor(sec / 3600) + ' 小时之前'

@@ -805,6 +805,54 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
   });
 
   // ── 管理面：统计 + 用户/仓库列表（admin token） ────────────────
+
+  m.get('/api/dsh/admin/sysinfo', async (c: Context) => {
+    const header = String(c.req.headers.authorization ?? '');
+    const token = /^token (.+)$/.exec(header)?.[1] ?? '';
+    const user = token ? authenticateUserByToken(token) : null;
+    if (!user || user.is_admin !== 1) { c.JSON(403, { error: 'forbidden' }); return; }
+    const mem = process.memoryUsage();
+    let gitVersion = '';
+    try { gitVersion = (await git.git(process.cwd(), '--version'))?.toString('utf8').trim() || ''; } catch {}
+    c.JSONSuccess({
+      version: '0.1.0-dsh', gitVersion: gitVersion.replace('git version ', ''),
+      nodeVersion: process.version, uptimeSec: Math.floor(process.uptime()),
+      mem: { rss: mem.rss, heapUsed: mem.heapUsed, heapTotal: mem.heapTotal },
+    });
+  });
+  m.get('/api/dsh/admin/orgs', async (c: Context) => {
+    const header = String(c.req.headers.authorization ?? '');
+    const token = /^token (.+)$/.exec(header)?.[1] ?? '';
+    const user = token ? authenticateUserByToken(token) : null;
+    if (!user || user.is_admin !== 1) { c.JSON(403, { error: 'forbidden' }); return; }
+    const rows = db.db().prepare("SELECT name, full_name, created_unix FROM user WHERE type = 1 ORDER BY id").all() as any[];
+    c.JSONSuccess(rows.map((r) => ({ name: r.name, fullName: r.full_name || '', created: r.created_unix })));
+  });
+  m.post('/api/dsh/admin/ops', async (c: Context) => {
+    const header = String(c.req.headers.authorization ?? '');
+    const token = /^token (.+)$/.exec(header)?.[1] ?? '';
+    const user = token ? authenticateUserByToken(token) : null;
+    if (!user || user.is_admin !== 1) { c.JSON(403, { error: 'forbidden' }); return; }
+    const body = await c.form();
+    const op = String(body.op ?? '');
+    const repos = db.db().prepare('SELECT id FROM repository').all() as any[];
+    if (op === 'sync_hooks') {
+      for (const r of repos) {
+        try { const repo = db.getRepoByID(r.id); if (repo) svc.createDelegateHooks(repo.RepoPath()); } catch {}
+      }
+      c.JSONSuccess({ ok: true, n: repos.length });
+      return;
+    }
+    if (op === 'gc') {
+      for (const r of repos) {
+        try { const repo = db.getRepoByID(r.id); if (repo) await git.git(repo.RepoPath(), 'gc', '--quiet'); } catch {}
+      }
+      c.JSONSuccess({ ok: true, n: repos.length });
+      return;
+    }
+    c.JSON(422, { error: 'unknown op: ' + op });
+  });
+
   m.get('/api/dsh/admin/summary', async (c: Context) => {
     const header = String(c.req.headers.authorization ?? '');
     const token = /^token (.+)$/.exec(header)?.[1] ?? '';

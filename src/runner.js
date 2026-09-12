@@ -29,8 +29,8 @@ const PLUGIN_ID = 'dsh-git-server'
 const SERVER_DIR = path.join(__dirname, '..', 'server')
 
 const DEFAULTS = {
-  enabled: false,
-  host: '127.0.0.1',
+  enabled: true,
+  host: '0.0.0.0', // 监听全网卡（局域网可访问）；不再是设置项，写死
   port: 3400,
   dataDir: '', // 空 = dshHome()/dsh-git-server/data
   adminPassword: '', // 播种的管理员密码（首次自动生成并持久化）
@@ -72,7 +72,6 @@ function sanitizePatch(patch, current) {
   const out = {}
   if (patch == null || typeof patch !== 'object') return out
   if (typeof patch.enabled === 'boolean') out.enabled = patch.enabled
-  if (typeof patch.host === 'string' && patch.host.trim()) out.host = patch.host.trim()
   if (patch.port !== undefined) {
     const n = Math.floor(Number(patch.port))
     if (Number.isFinite(n) && n >= NUM_RANGES.port[0] && n <= NUM_RANGES.port[1]) out.port = n

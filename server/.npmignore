@@ -1,0 +1,3 @@
+# 发布瘦身：TS 源码与 sourcemap 不打进包（运行时用编译产物 server/dist）
+src/
+**/*.map

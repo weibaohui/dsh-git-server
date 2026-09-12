@@ -39,8 +39,8 @@ function testHost() {
 
 test('normalizeConfig: 默认值与范围收敛', () => {
   const cfg = runner.normalizeConfig({})
-  assert.equal(cfg.enabled, false)
-  assert.equal(cfg.host, '127.0.0.1')
+  assert.equal(cfg.enabled, true)
+  assert.equal(cfg.host, '0.0.0.0')
   assert.equal(cfg.port, 3400)
   assert.ok(cfg.dataDir.includes('dsh-git-server'))
   const bad = runner.normalizeConfig({ port: 80 })
@@ -48,9 +48,10 @@ test('normalizeConfig: 默认值与范围收敛', () => {
 })
 
 test('sanitizePatch: 只收白名单且跳过无变化字段', () => {
-  const cur = runner.normalizeConfig({ port: 3400 })
-  const out = runner.sanitizePatch({ port: 3400, host: '0.0.0.0', junk: 'x' }, cur)
-  assert.deepEqual(out, { host: '0.0.0.0' })
+  const cur = runner.normalizeConfig({ port: 3400, dataDir: '/a' })
+  // host 已从白名单移除（监听地址写死 0.0.0.0，不再是设置项）；junk 非白名单；port 无变化
+  const out = runner.sanitizePatch({ port: 3400, host: '9.9.9.9', dataDir: '/b', junk: 'x' }, cur)
+  assert.deepEqual(out, { dataDir: '/b' })
 })
 
 test('writeAppIni: 渲染关键配置且幂等', () => {

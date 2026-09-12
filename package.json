@@ -19,9 +19,8 @@
   },
   "files": [
     "src",
+    "server",
     "client",
-    "scripts",
-    "vendor/ts-gogs",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -37,7 +36,7 @@
     "check": "node --check src/index.js && node --check src/runner.js && node --check client/index.js",
     "test": "node --test --test-force-exit \"test/*.test.mjs\"",
     "build:client": "node scripts/build-client.mjs",
-    "prepublishOnly": "npm run sync-gogs && npm run build:client && npm run check && npm test",
+    "prepublishOnly": "npm run build:client && npm run build:server && npm run check && npm test",
     "build:server": "tsc -p server/tsconfig.json",
     "sync-server": "node scripts/sync-server.mjs"
   },

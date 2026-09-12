@@ -87,7 +87,6 @@ function settingsSchema(Schema) {
   if (!Schema || typeof Schema.object !== 'function') return null
   return Schema.object({
     enabled: Schema.boolean().default(engine.DEFAULTS.enabled),
-    host: Schema.string().default(engine.DEFAULTS.host),
     port: Schema.number().step(1).min(engine.NUM_RANGES.port[0]).max(engine.NUM_RANGES.port[1]).default(engine.DEFAULTS.port),
     dataDir: Schema.string().default(engine.DEFAULTS.dataDir),
     adminPassword: Schema.string().default(engine.DEFAULTS.adminPassword),
@@ -464,6 +463,21 @@ module.exports = {
               const actor = umUsernameOf(req) // dsh 会话 → 操作者本人
               if (!actor) { sendJson(res, 401, { ok: false, error: '需要 dsh 登录' }); return }
               const parts = rest.split('/').filter(Boolean) // dsh|repos,o,r,what...
+
+              // 未启用/未运行时，数据面路由返回清晰提示（而不是去 fetch 内核撞
+              // ECONNREFUSED 变成一句莫名其妙的 "fetch failed"）。PUT /settings 例外
+              // 放行——那是启用入口，必须可用；GET /status 在上面 459 行已先行返回。
+              const isSettingsWrite = req.method === 'PUT' && rest === '/settings'
+              if (!isSettingsWrite) {
+                if (!cfg.enabled) {
+                  sendJson(res, 503, { ok: false, disabled: true, enabled: false, error: 'git 服务器未启用：请到「设置 → Git 服务器」勾选启用后重试' })
+                  return
+                }
+                if (!state.handle) {
+                  sendJson(res, 503, { ok: false, starting: true, enabled: true, running: false, error: 'git 服务器正在启动或异常重启中，请稍候重试' })
+                  return
+                }
+              }
 
               // GET /me — 本人 + 仓库列表
               if (req.method === 'GET' && (rest === '/me' || rest === '' || rest === '/')) {

@@ -468,6 +468,9 @@ export function loadTemplates(workDir: string): void {
   if (templatesLoaded) return;
   templates.funcs = buildFuncMap();
   const dir = path.join(workDir, 'templates');
+  // 网页 UI 已裁撤，发布包不再带 templates/；目录缺失时跳过加载（空模板集），
+  // 仅 status/500 错误页用到模板，Error() 已有 try/catch 兜底回退纯文本。
+  if (!fs.existsSync(dir)) { templatesLoaded = true; return; }
   const load = (d: string, rel: string) => {
     for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
       const full = path.join(d, entry.name);

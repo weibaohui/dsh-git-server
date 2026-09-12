@@ -1,13 +1,12 @@
-// Web request context: session, flash, i18n, rendering, and the middleware
+// Web request context: session, flash, rendering, and the middleware
 // suite (Toggle / RepoAssignment / RepoRef / OrgAssignment) mirroring
-// gogs internal/context.
+// gogs internal/context.（i18n 已随 /api/web 登录面裁撤）
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { URLSearchParams } from 'node:url';
 import { conf } from './conf.js';
-import { i18n, Locale, Lang } from './i18n.js';
 import * as db from './db/db.js';
 import { User, Repository } from './db/db.js';
 import { getRepoByName, accessMode, AccessMode, hasAccess } from './db/db.js';
@@ -115,7 +114,6 @@ export class Context {
   params: Record<string, string> = {};
   urlObj!: URL;
   session!: Session;
-  locale!: Locale;
   lang = 'en-US';
   Data: Record<string, any> = {};
   flash = new Flash();
@@ -332,8 +330,8 @@ export class Context {
 
   Error(err: Error, msg: string): void {
     console.error(`[ctx error] ${msg}: ${err?.stack ?? err}`);
-    // 500 改纯文本提示（模板已随网页 UI 裁撤，不再渲染 status/500 模板）。
-    const title = this.locale?.Tr('status.internal_server_error') ?? 'Internal Server Error';
+    // 500 改纯文本提示（模板与 i18n 已随网页 UI / /api/web 裁撤，标题硬编码英文）。
+    const title = 'Internal Server Error';
     const showDetail = !conf.isProdMode() || this.User?.is_admin === 1;
     const detail = showDetail ? `\n${msg}: ${String(err?.message ?? err)}` : '';
     this.rendered = true;
@@ -358,9 +356,6 @@ export class Context {
     for (const n of names) this.Data['Err_' + n] = true;
   }
 
-  Title(key: string): void {
-    this.Data['Title'] = this.locale.Tr(key);
-  }
   RawTitle(s: string): void {
     this.Data['Title'] = s;
   }
@@ -377,10 +372,6 @@ export class Context {
     this.Data['ErrorMsg'] = msg;
     this.Data['Flash'] = this.flash;
     this.Success(tpl);
-  }
-
-  Tr(key: string, ...args: any[]): string {
-    return this.locale.Tr(key, ...args);
   }
 
   UserID(): number {
@@ -498,36 +489,6 @@ export function authenticateUserByToken(sha1: string): User | null {
 
 export function Contexter() {
   return async (c: Context) => {
-    // i18n resolution: ?lang → cookie → Accept-Language → en-US
-    const langs = i18n.languages().map((l) => l.Lang);
-    let lang = '';
-    const q = c.Query('lang');
-    const cookieLang = c.GetCookie('lang');
-    if (q && langs.includes(q)) {
-      lang = q;
-      c.SetCookie('lang', q, 1 << 31 - 1, '/');
-    } else if (cookieLang && langs.includes(cookieLang)) {
-      lang = cookieLang;
-    } else {
-      const accept = String(c.req.headers['accept-language'] ?? '');
-      for (const part of accept.split(',')) {
-        const code = part.split(';')[0].trim();
-        if (langs.includes(code)) {
-          lang = code;
-          break;
-        }
-        const prefix = code.split('-')[0];
-        const hit = langs.find((l) => l === prefix || l.startsWith(prefix + '-'));
-        if (hit) {
-          lang = hit;
-          break;
-        }
-      }
-      lang = lang || 'en-US';
-    }
-    c.lang = lang;
-    c.locale = new Locale(lang);
-
     // session auth
     const uid = c.session.Get('uid');
     if (uid > 0) {
@@ -551,7 +512,7 @@ export function Contexter() {
 export function Toggle(opts: { SignInRequired?: boolean; SignOutRequired?: boolean; AdminRequired?: boolean }) {
   return (c: Context) => {
     if (c.IsLogged && c.User!.prohibit_login === 1) {
-      c.Data['Title'] = c.Tr('auth.prohibit_login');
+      c.Data['Title'] = 'Login Prohibited';
       c.Success('user/auth/prohibit_login');
       return;
     }
@@ -777,15 +738,4 @@ export function InjectParamsUser() {
     c.Data['ContextUser'] = user;
     (c as any).ContextUser = user;
   };
-}
-
-/** Finalize sign-in session (gogs completeSignIn). */
-export function completeSignIn(c: Context, u: User): void {
-  c.session.Set('uid', u.id);
-  c.session.Set('uname', u.name);
-  c.session.Delete('mfaUserID');
-  c.session.Release();
-  if (conf.enableLoginStatusCookie) {
-    c.SetCookie(conf.loginStatusCookieName, 'true', 0);
-  }
 }

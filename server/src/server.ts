@@ -5,9 +5,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { conf } from './conf.js';
 import { Context, Session, Contexter, setServeWebHandler } from './context.js';
-import { i18n } from './i18n.js';
 import { registerAPIRoutes } from './api/v1.js';
-import { handleWebAPI } from './webapi.js';
 import { handleGitHTTP } from './gitx/http.js';
 import { md5 } from './authx/password.js';
 
@@ -80,7 +78,7 @@ function serveStaticPrefix(req: http.IncomingMessage, res: http.ServerResponse, 
 /** Serve the SPA shell (public/dist/index.html) with WebContext substitution. */
 function serveGone(c: Context): void {
   // 原版 gogs 网页界面已裁撤：dsh 原生 UI 覆盖全部功能，
-  // 3400 只保留 git HTTP 协议 + /api/v1 + /api/dsh + /api/web(JSON)
+  // 3400 只保留 git HTTP 协议 + /api/v1 + /api/dsh（/api/web 登录面已随 SPA 裁撤）
   c.res.statusCode = 404;
   c.res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   c.res.end('web UI removed — use the dsh Git panel; git HTTP and APIs remain on this port');
@@ -90,16 +88,6 @@ let router: import('./router.js').Router;
 
 export async function startServer(): Promise<http.Server> {
   setServeWebHandler((c) => serveGone(c));
-
-  // i18n load
-  const langs = conf.i18nLangs.length
-    ? conf.i18nLangs
-    : fs
-        .readdirSync(path.join(conf.workDir, 'vendored-conf', 'locale'))
-        .filter((f) => f.startsWith('locale_') && f.endsWith('.ini'))
-        .map((f) => f.slice(7, -4));
-  const names = conf.i18nNames.length ? conf.i18nNames : langs;
-  i18n.load(path.join(conf.workDir, 'vendored-conf'), langs, names, conf.customDir);
 
   const { Router } = await import('./router.js');
   router = new Router();
@@ -244,15 +232,6 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     res.setHeader('Set-Cookie', `gogs_captcha=${id}; Path=${conf.subpath || '/'}; HttpOnly`);
     res.end(svg);
     return;
-  }
-
-  // SPA web API
-  if (pathname.startsWith('/api/web/')) {
-    const handled = await handleWebAPI(c, pathname.slice('/api/web'.length));
-    if (handled) {
-      finalize(c);
-      return;
-    }
   }
 
   // avatar endpoints

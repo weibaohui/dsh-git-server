@@ -787,7 +787,7 @@ async function createRepoHandler(ctx: APIContext, owner: User): Promise<void> {
     ctx.errorStatus(422, 'The repository with the same name already exists.');
     return;
   }
-  const { createRepositoryRecord } = await import('../routes/repo.js');
+  const { createRepositoryRecord } = await import('../repox.js');
   const repo = await createRepositoryRecord(ctx.user!, owner, {
     name,
     description: String(body.description ?? ''),

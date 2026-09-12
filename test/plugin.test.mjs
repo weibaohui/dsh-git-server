@@ -181,22 +181,6 @@ async function runE2EAttempt() {
     execFileSync('git', ['add', '.'], { cwd: join(dir, 'demo') })
     execFileSync('git', ['commit', '-m', 'c1'], { cwd: join(dir, 'demo'), env: gitEnv })
     execFileSync('git', ['-c', 'credential.helper=', 'push', 'origin', 'master'], { cwd: join(dir, 'demo'), env: gitEnv })
-    // 3) 网页登录接受 UM 凭据
-    const res = await fetch(`http://127.0.0.1:${freePort}/api/web/user/sign-in`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'drilluser', password: 'Passw0rd!123' }),
-    })
-    assert.equal(res.status, 200)
-    const doc = await res.json()
-    assert.ok(!doc.error)
-    // 4) 错误密码拒绝
-    const bad = await fetch(`http://127.0.0.1:${freePort}/api/web/user/sign-in`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'drilluser', password: 'wrong' }),
-    })
-    assert.equal(bad.status, 401)
   } finally {
     writeFileSync('/tmp/dgs-e2e-log.txt', logLines.join('\n'))
     await handle.stop().catch(() => {})

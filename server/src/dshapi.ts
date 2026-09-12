@@ -187,7 +187,7 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
       const patchDir = path.join(conf.appDataPath, 'patches', String(repo.id));
       fs.mkdirSync(patchDir, { recursive: true });
       fs.writeFileSync(path.join(patchDir, `${index}.patch`), patch);
-      const { testPullRequestMergeable } = await import('./routes/repo.js');
+      const { testPullRequestMergeable } = await import('./repox.js');
       const status = await testPullRequestMergeable(repo, { index, base_branch: base });
       db.db().prepare(
         `INSERT INTO pull_request (type, status, issue_id, "index", head_repo_id, base_repo_id, head_user_name, head_branch, base_branch, merge_base)
@@ -1015,9 +1015,9 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     const svc = await import('./gitx/service.js');
     const name = svc.toWikiPageName(decodeURIComponent(c.Params(':page')));
     const body = await c.form();
-    // 复用 routes/repo.ts 的写页实现（clone→写文件→commit→push→delegate hook）
+    // 复用 repox.ts 的写页实现（clone→写文件→commit→push→delegate hook）
     try {
-      const __repo = await import('./routes/repo.js');
+      const __repo = await import('./repox.js');
       await __repo.writeWikiPage(ar.repo, name, String(body.content ?? ''), ar.user, null);
       c.JSONSuccess({ ok: true });
     } catch (e: any) {

@@ -150,9 +150,7 @@ export class Conf {
   gitTimeoutPull = 300;
   gitTimeoutGC = 60;
 
-  // [i18n]
-  i18nLangs: string[] = [];
-  i18nNames: string[] = [];
+  // [i18n]（已随 /api/web 裁撤，不再加载语言）
 
   // [prometheus]
   prometheusEnabled = false;
@@ -332,11 +330,6 @@ export class Conf {
     this.gitTimeoutClone = toInt(this.get('git.timeout', 'CLONE'), 300);
     this.gitTimeoutPull = toInt(this.get('git.timeout', 'PULL'), 300);
     this.gitTimeoutGC = toInt(this.get('git.timeout', 'GC'), 60);
-
-    const langs = this.get('i18n', 'LANGS');
-    const names = this.get('i18n', 'NAMES');
-    this.i18nLangs = langs ? langs.split(',').map((s) => s.trim()) : [];
-    this.i18nNames = names ? names.split(',').map((s) => s.trim()) : [];
 
     this.prometheusEnabled = toBool(this.get('prometheus', 'ENABLED'), false);
     this.prometheusEnableBasicAuth = toBool(this.get('prometheus', 'ENABLE_BASIC_AUTH'), false);

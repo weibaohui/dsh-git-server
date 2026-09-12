@@ -27,7 +27,7 @@ dsh plugin --profile web add @weibaohui/dsh-git-server -w
 
 ## 使用
 
-1. 打开 Web UI → **设置 → Git 服务器**，勾选**启用**并保存（默认监听 `0.0.0.0:3400`）
+1. 打开 Web UI → **设置 → Git 服务器**——**默认已启用**（监听 `0.0.0.0:3400`，无需勾选；要停用在设置页取消勾选），可在此改端口/数据目录/查看兜底 `root` 密码
 2. 侧栏底部点「**Git**」进全屏管理页：新建仓库（或导入已有），照常开发
 3. `git clone/push` 走子进程端口，凭据用 dsh / user-management 的用户名密码（未装 user-management 则用内置管理员 `root` + 设置页展示的密码）：
 

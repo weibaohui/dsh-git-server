@@ -29,6 +29,9 @@ async function ensureInit(cfg) {
     const { conf } = await import(pathToFileURL(path.join(serverDir, 'dist', 'conf.js')).href);
     conf.load(serverDir, customDir, customConf);
     const dshapi = await import(pathToFileURL(path.join(serverDir, 'dist', 'dshapi.js')).href);
+    const um = await import(pathToFileURL(path.join(serverDir, 'dist', 'authx', 'um.js')).href);
+    const pw = await import(pathToFileURL(path.join(serverDir, 'dist', 'authx', 'password.js')).href);
+    const dbm = await import(pathToFileURL(path.join(serverDir, 'dist', 'db', 'db.js')).href);
     const routes = [];
     const fake = {
       get: (p, ...h) => routes.push({ method: 'GET', pattern: p, handler: h[0] }),
@@ -37,7 +40,7 @@ async function ensureInit(cfg) {
       delete: (p, ...h) => routes.push({ method: 'DELETE', pattern: p, handler: h[0] }),
     };
     dshapi.registerDshRoutes(fake);
-    return { routes };
+    return { routes, um, pw, dbm };
   })();
   return _ready;
 }
@@ -124,3 +127,42 @@ async function readBodyJson(req) {
 }
 
 module.exports = { dispatch };
+
+// ── 身份链（宿主侧，全程无内核 HTTP） ──────────────────────────────────────
+// dsh 会话已知用户名（网关已认证）；宿主直接：读 UM users.json 取角色 →
+// ensureShadowUser 建/对齐影子号（同一 gogs.db）→ 直接往 access_token 表铸令牌。
+
+function umProfileFor(username) {
+  try {
+    const { join } = require('node:path');
+    const file = join(process.env.DSH_HOME || path.join(require('node:os').homedir(), '.dsh'), 'user-management', 'users.json');
+    const doc = JSON.parse(require('node:fs').readFileSync(file, 'utf8'));
+    const u = (doc.users || []).find((x) => x.username === username);
+    if (!u) return null;
+    return { username: u.username, role: u.role, disabled: !!u.disabled, totpEnabled: !!u.totpSecret };
+  } catch { return null }
+}
+
+/** 影子建号（幂等）。返回是否成功。 */
+async function ensureShadowHost(cfg, username) {
+  const { um } = await ensureInit(cfg);
+  const profile = umProfileFor(username);
+  if (!profile) return false;
+  um.ensureShadowUser(profile);
+  return true;
+}
+
+/** 宿主直接铸个人令牌（写共享的 access_token 表，内核侧读同一库）。 */
+async function mintTokenHost(cfg, username) {
+  const { pw, dbm } = await ensureInit(cfg);
+  await ensureShadowHost(cfg, username);
+  const u = dbm.getUserByUsername(username);
+  if (!u) throw new Error('影子用户缺失: ' + username);
+  const sha1 = pw.newTokenSHA1();
+  const now = Math.floor(Date.now() / 1000);
+  dbm.db().prepare('INSERT INTO access_token (uid, name, sha1, sha256, created_unix, updated_unix) VALUES (?,?,?,?,?,?)')
+    .run(u.id, 'dsh-' + now.toString(36), sha1, pw.sha256(sha1), now, now);
+  return sha1;
+}
+
+module.exports = { dispatch, ensureShadowHost, mintTokenHost };

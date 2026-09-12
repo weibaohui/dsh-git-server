@@ -156,37 +156,6 @@ export async function handleWebAPI(c: Context, subPath: string): Promise<boolean
     }
   }
 
-  if (subPath === '/user/dsh-impersonate') {
-    if (method !== 'POST') {
-      c.JSON(405, { error: 'method not allowed' });
-      return true;
-    }
-    const um = await import('./authx/um.js');
-    const secret = process.env.DSH_IMPERSONATE_SECRET || '';
-    const req2 = await c.form();
-    const reqSecret = String(req2.secret ?? c.req.headers['x-dsh-secret'] ?? '');
-    const uname = String(req2.username ?? '').trim();
-    if (!um.umServiceEnabled() || !secret || reqSecret !== secret) {
-      c.JSON(404, { error: 'not found' });
-      return true;
-    }
-    const rec = await um.umFindUser(uname);
-    if (!rec || rec.disabled || rec.totpEnabled) {
-      c.JSON(404, { error: 'user not found' });
-      return true;
-    }
-    const shadow = um.ensureShadowUser(rec);
-    if (!shadow || shadow.type !== 0) {
-      c.JSON(500, { error: 'provision failed' });
-      return true;
-    }
-    completeSignIn(c, shadow);
-    c.JSONSuccess({});
-    return true;
-  }
-
-
-
   if (subPath === '/user/sign-out' && method === 'POST') {
     c.session.Clear();
     c.session.Release();

@@ -171,28 +171,16 @@ module.exports = {
       cfg.adminPassword = pw
     }
 
-    // ── 用户桥：dsh 会话 → kernel 用户（建号）→ kernel 个人令牌（按人缓存） ──
+    // ── 用户桥（宿主侧全程无内核 HTTP）：dsh 会话用户名 → 影子建号（宿主读
+    // UM users.json + 写共享 gogs.db）→ 铸个人令牌（直插 access_token 表）。
+    // 内核不再为此服务 HTTP；只保留 git HTTP/LFS 的 basic 认证。
     const userTokens = new Map() // username → { pw, token }（子进程重启由 reconcile 清空）
     async function kernelTokenFor(cfg, username) {
       const hit = userTokens.get(username)
       if (hit && hit.pw === cfg.adminPassword) return hit.token
-      // 1) 影子建号（kernel 侧按 UM profile 同名开户；幂等）
-      await fetch(`http://127.0.0.1:${cfg.port}/api/web/user/dsh-impersonate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Dsh-Secret': cfg.impersonateSecret },
-        body: new URLSearchParams({ username }).toString(),
-      }).catch(() => {})
-      // 2) 管理员 basic 为该用户铸个人令牌（此后所有 API 以本人身份执行）
-      const res = await fetch(`http://127.0.0.1:${cfg.port}/api/v1/users/${encodeURIComponent(username)}/tokens`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Basic ' + Buffer.from(`root:${cfg.adminPassword}`).toString('base64'),
-        },
-        body: JSON.stringify({ name: 'dsh-' + Date.now().toString(36) }),
-      })
-      if (res.status !== 200 && res.status !== 201) throw new Error(`铸用户令牌失败(${username}): ${res.status}`)
-      const token = ((await res.json()) || {}).sha1
+      const { ensureShadowHost, mintTokenHost } = require('./dsh-host')
+      await ensureShadowHost(cfg, username)
+      const token = await mintTokenHost(cfg, username)
       userTokens.set(username, { pw: cfg.adminPassword, token })
       return token
     }

@@ -11,14 +11,17 @@
 
 - **完整自助 Git 服务**：HTTP clone/push 开箱即用，仓库/工单/PR/wiki/发版/标签/里程碑一条龙，崩溃自动拉起
 - **dsh 原生管理页**：侧栏底部「Git」进全屏页——建仓/删仓/克隆地址，仓库浏览多标签（文件树+内容、提交历史、分支、工单、PR、Wiki、发版、标签、里程碑、设置）；React + dsh 主题（亮暗自动跟随）、zh/en 双语
-- **账号打通**：装了 [user-management](https://github.com/weibaohui/user-management) 即复用其用户名密码，git 凭据与页面登录免另记一套；未装则用内置管理员 `root`（密码设置页可见可轮换）；网页注册关闭
+- **账号打通**：账户来源 = [user-management](https://github.com/weibaohui/user-management)（必装）——git 凭据与页面登录均走 user-management 校验，免另记一套账号；网页注册关闭，账号只由 dsh 管理
 - **一键启停**：启用/停用/端口/数据目录全在设置页，改完即生效
 - **局域网 git**：默认监听 `0.0.0.0`，局域网内机器可直接 `git clone/push`
 - **数据自持**：数据目录 = 仓库 + 数据库 + 日志，备份整个目录即备份全部
 
 ## 安装
 
+本插件依赖 [user-management](https://github.com/weibaohui/user-management) 提供登录与账户，必须先装：
+
 ```bash
+dsh plugin --profile web add @weibaohui/user-management -w
 dsh plugin --profile web add @weibaohui/dsh-git-server -w
 ```
 
@@ -28,7 +31,7 @@ dsh plugin --profile web add @weibaohui/dsh-git-server -w
 
 1. 打开 Web UI → **设置 → Git 服务器**——**默认已启用**（监听 `0.0.0.0:3400`，无需勾选；要停用在设置页取消勾选），可在此改端口/数据目录/查看 `root` 密码
 2. 侧栏底部点「**Git**」进全屏管理页：新建仓库（或导入已有），照常开发
-3. `git clone/push` 走子进程端口，凭据用 dsh / user-management 的用户名密码（未装 user-management 则用内置管理员 `root` + 设置页展示的密码）：
+3. `git clone/push` 走子进程端口，凭据用 user-management 的用户名密码：
 
    ```sh
    git clone http://127.0.0.1:3400/root/drill-repo.git

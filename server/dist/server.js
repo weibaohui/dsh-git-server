@@ -6,7 +6,6 @@ import * as path from 'node:path';
 import { conf } from './conf.js';
 import { loadTemplates, Context, Session, Contexter, setServeWebHandler } from './context.js';
 import { i18n } from './i18n.js';
-import { registerWebRoutes } from './routes/index.js';
 import { registerAPIRoutes } from './api/v1.js';
 import { handleWebAPI } from './webapi.js';
 import { handleGitHTTP } from './gitx/http.js';
@@ -77,46 +76,17 @@ function serveStaticPrefix(req, res, pathname) {
     return false;
 }
 /** Serve the SPA shell (public/dist/index.html) with WebContext substitution. */
-function serveSPA(c, statusCode = 200) {
-    const distDir = path.join(conf.workDir, 'public', 'dist');
-    const pathname = c.Path();
-    // static assets from dist
-    if (pathname.startsWith('/assets/') || pathname.startsWith('/src/') || pathname.startsWith('/img/')) {
-        const rel = pathname.replace(/^\/+/, '');
-        const safe = path.normalize(rel).replace(/^(\.\.[/\\])+/, '');
-        if (pathname.startsWith('/img/') && serveFile(c.res, path.join(conf.workDir, 'public', safe), false))
-            return;
-        if (serveFile(c.res, path.join(distDir, safe)))
-            return;
-        if (pathname.startsWith('/img/') && serveFile(c.res, path.join(distDir, safe), false))
-            return;
-    }
-    const indexFile = path.join(distDir, 'index.html');
-    if (!fs.existsSync(indexFile)) {
-        c.res.statusCode = 404;
-        c.res.end('404 page not found');
-        return;
-    }
-    let html = fs.readFileSync(indexFile, 'utf8');
-    const payload = JSON.stringify({ lang: c.lang, subURL: conf.subpath }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
-    const script = `<script>window.__webContext=${payload};document.documentElement.lang=window.__webContext.lang;</script>`;
-    html = html.replace('{{.WebContext}}', script);
-    if (conf.subpath !== '') {
-        html = html
-            .replaceAll('src="./assets/', `src="${conf.subpath}/assets/`)
-            .replaceAll('href="./assets/', `href="${conf.subpath}/assets/`)
-            .replaceAll('src="/src/', `src="${conf.subpath}/src/`)
-            .replaceAll('href="/img/', `href="${conf.subpath}/img/`);
-    }
-    c.res.setHeader('Cache-Control', 'no-store');
-    c.res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    c.res.statusCode = statusCode;
-    c.res.end(html);
+function serveGone(c) {
+    // 原版 gogs 网页界面已裁撤：dsh 原生 UI 覆盖全部功能，
+    // 3400 只保留 git HTTP 协议 + /api/v1 + /api/dsh + /api/web(JSON)
+    c.res.statusCode = 404;
+    c.res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    c.res.end('web UI removed — use the dsh Git panel; git HTTP and APIs remain on this port');
 }
 let router;
 export async function startServer() {
     loadTemplates(conf.workDir);
-    setServeWebHandler((c, status) => serveSPA(c, status));
+    setServeWebHandler((c) => serveGone(c));
     // i18n load
     const langs = conf.i18nLangs.length
         ? conf.i18nLangs
@@ -128,7 +98,6 @@ export async function startServer() {
     i18n.load(path.join(conf.workDir, 'vendored-conf'), langs, names, conf.customDir);
     const { Router } = await import('./router.js');
     router = new Router();
-    registerWebRoutes(router);
     registerAPIRoutes(router);
     const { registerDshRoutes } = await import('./dshapi.js');
     registerDshRoutes(router);
@@ -383,9 +352,9 @@ async function handleRequest(req, res) {
         finalize(c);
         return;
     }
-    // SPA catch-all
+    // web UI removed (see serveGone)
     if (req.method === 'GET' || req.method === 'HEAD') {
-        serveSPA(c, 200);
+        serveGone(c);
         return;
     }
     res.statusCode = 404;

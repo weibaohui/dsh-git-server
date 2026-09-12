@@ -344,7 +344,6 @@ function FileTree({ repo, rev, t, overview, onOverview }) {
         setFile({ name: e.name, text: d.ok ? d.text : null, size: e.size, isMd, html })
       })
   }
-  const crumbs = ['', ...path ? path.split('/') : []]
   const startCreate = (mode) => {
     setNewFile(mode); setMsg('')
     setNf({ path: '', content: '', message: '' })
@@ -369,10 +368,10 @@ function FileTree({ repo, rev, t, overview, onOverview }) {
   return h('div', null,
     h('div', { className: 'dgs-row', style: { marginBottom: 8 } },
       h('div', { className: 'dgs-crumbs', style: { margin: 0 } },
-        h('span', { className: 'dgs-crumb cur' }, rev),
+        h('span', { className: 'dgs-crumb' + (path ? '' : ' cur'), style: { cursor: path ? 'pointer' : 'default' }, onClick: () => setPath('') }, rev),
         path.split('/').filter(Boolean).map((seg, i, arr) =>
           h('span', { key: i },
-            h('span', { className: 'dgs-crumb', onClick: () => setPath(arr.slice(0, i + 1).join('/')) }, seg),
+            h('span', { className: 'dgs-crumb' + (i === arr.length - 1 ? ' cur' : ''), onClick: () => setPath(arr.slice(0, i + 1).join('/')) }, seg),
             i < arr.length - 1 ? h('span', { className: 'dgs-sub' }, '/') : null))),
       h('span', { style: { flex: 1 } }),
       h('button', { className: 'dgs-btn', onClick: () => startCreate('create') }, '新的文件'),

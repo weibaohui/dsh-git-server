@@ -589,8 +589,19 @@ module.exports = {
                 sendJson(res, r.status === 201 ? 200 : r.status, r.status === 201 ? { ok: true } : { ok: false, error: errText(r) })
                 return
               }
-              // /dsh/* 透传：内核 dsh API（overview/pulls/wiki/releases/markdown）
+              // /dsh/*：宿主进程内直接执行内核 dshapi（省铸令牌+HTTP 跳转）。
+              // 异常/未匹配路由回退到原来的 HTTP 转发，保证任何内核端点仍可到达。
               if (parts && parts[0] === 'dsh') {
+                try {
+                  const token = await kernelTokenFor(cfg, actor)
+                  const { dispatch } = require('./dsh-host')
+                  const handled = await dispatch(cfg, actor, req.method, rest, req, res, token)
+                  if (handled) return
+                } catch (e) {
+                  sendJson(res, 502, { ok: false, error: 'in-process dispatch failed: ' + String((e && e.message) || e) })
+                  return
+                }
+                // 未匹配（理论上不会发生——dshapi 的路由全注册了）则回退透传
                 const kernelPath = '/api' + (rest.startsWith('/') ? rest : '/' + rest) + (url.search || '')
                 try {
                   const token = await kernelTokenFor(cfg, actor)

@@ -539,7 +539,7 @@ window.__ModuleLoader__.load({
         className: 'dgs-input', style: { maxWidth: 150, flex: 'none', width: 'auto', padding: '5px 8px' },
         value: flt[key], onChange: (e) => setFlt({ ...flt, [key]: e.target.value }),
       }, h('option', { value: '' }, blank),
-        items.map((x) => h('option', { key: x.id || x.name, value: String(x.id || x.name) }, x.name)))
+        items.map((x) => h('option', { key: x.id || x.name, value: String(x.id || x.name) }, x.title || x.name)))
       return h('div', null,
         h('div', { className: 'dgs-row', style: { margin: '8px 0 12px' } },
           h('button', { className: 'dgs-pill' + (state === 'open' ? ' active' : ''), onClick: () => setState('open') }, '⊘ ' + t('openState')),
@@ -1331,7 +1331,7 @@ window.__ModuleLoader__.load({
         key: key, className: 'dgs-input', style: { maxWidth: 130, flex: 'none', width: 'auto', padding: '5px 8px', marginLeft: 8 },
         value: flt[key], onChange: (e) => setFlt({ ...flt, [key]: e.target.value }),
       }, h('option', { value: '' }, blank),
-        items.map((x) => h('option', { key: x.id || x.name, value: String(x.id || x.name) }, x.name)))
+        items.map((x) => h('option', { key: x.id || x.name, value: String(x.id || x.name) }, x.title || x.name)))
       const row = (x) => h('div', { key: x.index, className: 'dgs-issue', style: { cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }, onClick: () => setOpenIdx(x.index) },
         h('span', { className: 'dgs-issue-num' + (x.state !== 'open' ? ' closed' : '') }, '#' + x.index),
         h('div', { style: { flex: 1, minWidth: 0 } },

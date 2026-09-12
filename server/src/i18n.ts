@@ -1,7 +1,7 @@
 // i18n compatible with go-macaron/i18n semantics over gogs locale_*.ini files.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { goSprintf } from './gotemplate/engine.js';
+import { goSprintf } from './gosprintf.js';
 
 export interface Lang {
   Lang: string;

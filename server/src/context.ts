@@ -8,8 +8,6 @@ import * as fs from 'node:fs';
 import { URLSearchParams } from 'node:url';
 import { conf } from './conf.js';
 import { i18n, Locale, Lang } from './i18n.js';
-import { TemplateSet, SafeHTML } from './gotemplate/engine.js';
-import { buildFuncMap } from './gotemplate/funcs.js';
 import * as db from './db/db.js';
 import { User, Repository } from './db/db.js';
 import { getRepoByName, accessMode, AccessMode, hasAccess } from './db/db.js';
@@ -299,31 +297,13 @@ export class Context {
     this.HTML(200, tmpl);
   }
 
+  // 网页 UI 已裁撤：模板渲染管线整体移除，HTML()/Success() 退化为纯文本兜底
+  //（仅死网页路由会调到；API 全走 c.JSON()，不会进这里）。
   HTML(status: number, tmpl: string): void {
     this.rendered = true;
-    this.Data['Lang'] = this.lang;
-    this.Data['LangName'] = this.locale?.Language() ?? this.lang;
-    const allLangs: Lang[] = i18n.languages();
-    this.Data['AllLangs'] = allLangs;
-    this.Data['RestLangs'] = allLangs.filter((l) => l.Lang !== this.lang);
-    this.Data['i18n'] = this.locale;
-    this.Data['Tr'] = (key: string, ...args: any[]) => this.locale.Tr(key, ...args);
-    this.Data['Flash'] = this.flash;
-    this.Data['ShowFooterBranding'] = conf.showFooterBranding;
-    if (process.env.TPL_DEBUG && tmpl.startsWith('repo/branches')) {
-      console.log('[render:dbg] %s DefaultBranch=%j', tmpl, this.Data['DefaultBranch']);
-    }
-    try {
-      const html = templates.render(tmpl, this.Data);
-      this.res.statusCode = status;
-      this.res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      this.res.end(html);
-    } catch (e: any) {
-      console.error('[template error]', tmpl, e);
-      this.res.statusCode = 500;
-      this.res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      this.res.end('Internal server error');
-    }
+    this.res.statusCode = status;
+    this.res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    this.res.end('web UI removed — use the dsh Git panel');
   }
 
   /** gogs 404: redirect to SPA shell — we render a simple 404 page (status/404 template missing in this version) */
@@ -352,20 +332,14 @@ export class Context {
 
   Error(err: Error, msg: string): void {
     console.error(`[ctx error] ${msg}: ${err?.stack ?? err}`);
-    this.Data['Title'] = this.locale?.Tr('status.internal_server_error') ?? 'Internal Server Error';
-    if (!conf.isProdMode() || this.User?.is_admin === 1) {
-      this.Data['ErrorMsg'] = String(err?.message ?? err);
-    }
-    try {
-      this.rendered = true;
-      const html = templates.render('status/500', { ...this.Data, Lang: this.lang, i18n: this.locale, Flash: this.flash });
-      this.res.statusCode = 500;
-      this.res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      this.res.end(html);
-    } catch {
-      this.res.statusCode = 500;
-      this.res.end('Internal server error');
-    }
+    // 500 改纯文本提示（模板已随网页 UI 裁撤，不再渲染 status/500 模板）。
+    const title = this.locale?.Tr('status.internal_server_error') ?? 'Internal Server Error';
+    const showDetail = !conf.isProdMode() || this.User?.is_admin === 1;
+    const detail = showDetail ? `\n${msg}: ${String(err?.message ?? err)}` : '';
+    this.rendered = true;
+    this.res.statusCode = 500;
+    this.res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    this.res.end(title + detail);
   }
 
   NotFoundOrError(err: any, msg: string): void {
@@ -457,32 +431,6 @@ export class RepoContext {
 let serveWebHandler: ((c: Context, status: number) => void) | null = null;
 export function setServeWebHandler(fn: (c: Context, status: number) => void): void {
   serveWebHandler = fn;
-}
-
-// ---------------------------------------------------------------- template set
-
-export const templates = new TemplateSet();
-let templatesLoaded = false;
-
-export function loadTemplates(workDir: string): void {
-  if (templatesLoaded) return;
-  templates.funcs = buildFuncMap();
-  const dir = path.join(workDir, 'templates');
-  // 网页 UI 已裁撤，发布包不再带 templates/；目录缺失时跳过加载（空模板集），
-  // 仅 status/500 错误页用到模板，Error() 已有 try/catch 兜底回退纯文本。
-  if (!fs.existsSync(dir)) { templatesLoaded = true; return; }
-  const load = (d: string, rel: string) => {
-    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
-      const full = path.join(d, entry.name);
-      const name = rel ? rel + '/' + entry.name : entry.name;
-      if (entry.isDirectory()) load(full, name);
-      else if (entry.name.endsWith('.tmpl')) {
-        templates.registerFile(name.slice(0, -5), fs.readFileSync(full, 'utf8'));
-      }
-    }
-  };
-  load(dir, '');
-  templatesLoaded = true;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -595,12 +543,7 @@ export function Contexter() {
     c.Data['LoggedUserName'] = c.User?.name ?? '';
     c.Data['IsAdmin'] = c.User?.is_admin === 1;
     c.Data['ShowRegistrationButton'] = !conf.disableRegistration;
-    // server notice banner
-    const noticeFile = path.join(conf.customDir, 'notice', 'banner.md');
-    if (fs.existsSync(noticeFile) && fs.statSync(noticeFile).size <= 1024) {
-      const { rawMarkdown } = await import('./markup.js');
-      c.Data['ServerNotice'] = new SafeHTML(rawMarkdown(fs.readFileSync(noticeFile, 'utf8'), conf.subpath, {}));
-    }
+    // server notice banner 已随网页 UI 裁撤移除（原消费方是网页模板，无活读者）。
   };
 }
 

@@ -3,7 +3,11 @@
 // (bluemonday UGC-style whitelist).
 import { Marked } from 'marked';
 import { conf } from './conf.js';
-import { shortSHA1 } from './gotemplate/funcs.js';
+
+// 原 gotemplate/funcs.js 的 shortSHA1（3 行，内联以解除对模板 funcs 的依赖）
+function shortSHA1(sha: string): string {
+  return String(sha).length > 10 ? String(sha).slice(0, 10) : String(sha);
+}
 
 const marked = new Marked({ gfm: true, breaks: false });
 

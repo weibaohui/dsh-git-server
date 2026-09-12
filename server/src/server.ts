@@ -4,7 +4,7 @@ import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { conf } from './conf.js';
-import { loadTemplates, Context, Session, Contexter, setServeWebHandler } from './context.js';
+import { Context, Session, Contexter, setServeWebHandler } from './context.js';
 import { i18n } from './i18n.js';
 import { registerAPIRoutes } from './api/v1.js';
 import { handleWebAPI } from './webapi.js';
@@ -89,7 +89,6 @@ function serveGone(c: Context): void {
 let router: import('./router.js').Router;
 
 export async function startServer(): Promise<http.Server> {
-  loadTemplates(conf.workDir);
   setServeWebHandler((c) => serveGone(c));
 
   // i18n load

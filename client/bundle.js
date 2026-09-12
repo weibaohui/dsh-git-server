@@ -1942,7 +1942,9 @@ window.__ModuleLoader__.load({
           profile.activity.length === 0 ? h('div', { className: 'dgs-empty' }, '—') : null,
           profile.activity.map((a, i) =>
             h('div', { key: i, className: 'dgs-card', style: { padding: '8px 14px' } },
-              h('span', { className: 'dgs-sub' }, `${a.repo} · ${timeAgo(a.date * 1000)}`)))))
+              h('div', { className: 'dgs-row' },
+                h('span', { style: { flex: 1 } }, activityText(a)),
+                h('span', { className: 'dgs-sub' }, timeAgo(a.date * 1000)))))))
     }
 
     // ── 管理面板 ───────────────────────────────────────────────────────────────
@@ -2263,6 +2265,22 @@ window.__ModuleLoader__.load({
     }
 
     // ── utils ─────────────────────────────────────────────────────────────────
+
+    function activityText(a) {
+      const repo = a.repo || ''
+      const ref = a.ref || ''
+      const m = {
+        1: '创建了仓库 ' + repo, 2: '重命名仓库 ' + repo, 3: '点赞了仓库 ' + repo, 4: '关注了仓库 ' + repo,
+        5: '推送提交到 ' + repo + (ref ? '（' + ref + '）' : ''), 6: '创建了工单 · ' + (a.content || ''),
+        7: '发起合并请求 · ' + (a.content || ''), 8: '转移仓库 ' + repo, 9: '发布标签 ' + ref,
+        10: '评论了工单 · ' + (a.content || ''), 11: '合并了合并请求 · ' + (a.content || ''),
+        12: '关闭了工单 · ' + (a.content || ''), 13: '重开工单 · ' + (a.content || ''),
+        14: '关闭了合并请求 · ' + (a.content || ''), 15: '重开合并请求 · ' + (a.content || ''),
+        16: '创建分支 ' + ref + ' 于 ' + repo, 17: '删除分支 ' + ref + ' 于 ' + repo,
+        18: '删除标签 ' + ref, 19: '复刻了仓库 ' + repo, 20: '同步镜像 ' + repo,
+      }
+      return m[a.type] || ('活动于 ' + repo)
+    }
 
     function fmtSize(n) {
       if (n == null) return ''

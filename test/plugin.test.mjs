@@ -189,7 +189,15 @@ async function runE2EAttempt() {
   }
 }
 
-test('端到端：子进程启动 → git clone/push → user-management 凭据 → 停止', { timeout: 180000 }, async () => {
+// E2E 测试需要真实 user-management store 模块 + git CLI，仅本机可跑；CI 自动跳过
+const _umStoreCandidates = [
+  process.env.DSH_UM_STORE_PATH,
+  join(repoRoot, '..', 'user-management', 'src', 'store.js'),
+  join(homedir(), '.dsh', 'profiles', 'web', 'node_modules', '@weibaohui', 'user-management', 'src', 'store.js'),
+].filter(Boolean)
+const _umStoreAvailable = _umStoreCandidates.some((c) => existsSync(c))
+
+test('端到端：子进程启动 → git clone/push → user-management 凭据 → 停止', { timeout: 180000, skip: !_umStoreAvailable && '需要 user-management store 模块（仅本机）' }, async () => {
   try {
     await runE2EAttempt()
   } catch (e) {

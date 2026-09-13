@@ -57,6 +57,9 @@ window.__ModuleLoader__.load({
       noReleases: '暂无发版', noWiki: '暂无页面——创建第一个', deletePage: '删除页面',
       prMerged: '已合并', prOpen: '开启中', prClosed: '已关闭',
       labels: '标签管理', milestones: '里程碑', settings: '设置',
+      stRunning: '运行中', stStopped: '已停用', stError: '错误', stRetrying: '重试中',
+      stUnreachable: '无法连接', stFetchErr: '状态接口无响应，宿主进程可能已崩溃',
+      stPid: 'PID', stCrashes: '崩溃', stDepsFailed: '依赖缺失',
     }
     const EN = {
       nav: 'Git', title: 'Repositories',
@@ -78,6 +81,9 @@ window.__ModuleLoader__.load({
       noReleases: 'No releases', noWiki: 'No pages yet — create one', deletePage: 'Delete page',
       prMerged: 'Merged', prOpen: 'Open', prClosed: 'Closed',
       labels: 'Labels', milestones: 'Milestones', settings: 'Settings',
+      stRunning: 'Running', stStopped: 'Stopped', stError: 'Error', stRetrying: 'Retrying',
+      stUnreachable: 'Unreachable', stFetchErr: 'Status endpoint not responding — host process may have crashed',
+      stPid: 'PID', stCrashes: 'crashes', stDepsFailed: 'deps missing',
     }
 
     // ── styles（dsw token 原生） ───────────────────────────────────────────────
@@ -166,6 +172,21 @@ window.__ModuleLoader__.load({
     .dgs-comment{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:10px 12px;margin:8px 0}
     .dgs-empty{color:var(--dsw-alias-label-tertiary);text-align:center;padding:40px 0;font-size:13px}
     .dgs-err{color:var(--dsw-alias-state-error-primary);font-size:13px}
+    .dgs-status-row{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+    .dgs-status-dot{width:8px;height:8px;border-radius:50%;flex:none}
+    .dgs-status-dot.running{background:var(--dsw-alias-state-success-primary)}
+    .dgs-status-dot.stopped{background:var(--dsw-alias-label-tertiary)}
+    .dgs-status-dot.error{background:var(--dsw-alias-state-error-primary)}
+    .dgs-status-dot.waiting{background:#f59e0b}
+    .dgs-status-dot.unreachable{background:var(--dsw-alias-state-error-primary);animation:dgs-pulse 1.5s ease-in-out infinite}
+    @keyframes dgs-pulse{0%,100%{opacity:1}50%{opacity:.3}}
+    .dgs-status-text{font-size:13px;font-weight:600}
+    .dgs-status-text.running{color:var(--dsw-alias-state-success-primary)}
+    .dgs-status-text.stopped{color:var(--dsw-alias-label-tertiary)}
+    .dgs-status-text.error{color:var(--dsw-alias-state-error-primary)}
+    .dgs-status-text.waiting{color:#f59e0b}
+    .dgs-status-text.unreachable{color:var(--dsw-alias-state-error-primary)}
+    .dgs-status-meta{font-size:12px;color:var(--dsw-alias-label-tertiary);margin-left:4px}
     .dgs-ico{margin-right:8px;opacity:.75}
     .dgs-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--dsw-alias-toast-bg);color:#fff;border-radius:8px;padding:8px 16px;font-size:12px;z-index:2147483600}
     .dgs-settings{max-width:720px;display:flex;flex-direction:column;gap:12px;padding:12px 16px 24px;color:var(--dsw-alias-label-primary)}
@@ -2116,27 +2137,57 @@ window.__ModuleLoader__.load({
 
     function SettingsSection({ t }) {
       const [status, setStatus] = useState(null)
+      const [unreachable, setUnreachable] = useState(false)
       const [form, setForm] = useState({ enabled: false, host: '127.0.0.1', port: 3400, dataDir: '' })
       const [busy, setBusy] = useState(false)
       const [msg, setMsg] = useState('')
       useEffect(() => {
         fetch(API + '/status').then((r) => r.json()).then((d) => {
-          setStatus(d)
+          setStatus(d); setUnreachable(false)
           setForm({ enabled: !!d.enabled, host: d.host || '127.0.0.1', port: d.port || 3400, dataDir: d.dataDir || '' })
-        }).catch(() => {})
+        }).catch(() => setUnreachable(true))
+      }, [])
+      // 定时轮询：保持状态新鲜但不覆盖用户正在编辑的表单
+      useEffect(() => {
+        const id = setInterval(() => {
+          fetch(API + '/status').then((r) => r.json()).then((d) => { setStatus(d); setUnreachable(false) }).catch(() => setUnreachable(true))
+        }, 5000)
+        return () => clearInterval(id)
       }, [])
       const save = async () => {
         setBusy(true); setMsg('…')
         try {
           const res = await fetch(API + '/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
           const d = await res.json()
-          setStatus(d); setMsg('')
+          setStatus(d); setUnreachable(false); setMsg('')
         } catch (e) { setMsg(String(e)) } finally { setBusy(false) }
       }
       const field = (k) => ({ value: form[k], onChange: (e) => setForm({ ...form, [k]: e.target.value }) })
+      // 推导徽章状态：fetch 失败优先（宿主进程可能崩溃）
+      let stKey = 'stopped', stLabel = t('stStopped')
+      if (unreachable) {
+        stKey = 'unreachable'; stLabel = t('stUnreachable')
+      } else if (status) {
+        if (status.error) { stKey = 'error'; stLabel = t('stError') }
+        else if (status.running) { stKey = 'running'; stLabel = t('stRunning') }
+        else if (status.enabled) { stKey = 'waiting'; stLabel = t('stRetrying') }
+      }
+      const meta = []
+      if (!unreachable && status) {
+        if (status.running && status.pid) meta.push(t('stPid') + ' ' + status.pid)
+        if (status.crashes > 0) meta.push(status.crashes + ' ' + t('stCrashes'))
+        if (status.deps === 'failed') meta.push(t('stDepsFailed'))
+      }
       return h('div', { className: 'dgs-settings' },
         h('div', { className: 'dgs-card' },
-          h('div', { className: 'dgs-h1' }, t('title')),
+          h('div', { className: 'dgs-row', style: { justifyContent: 'space-between', alignItems: 'center' } },
+            h('div', { className: 'dgs-h1' }, t('title')),
+            (status || unreachable) ? h('div', { className: 'dgs-status-row' },
+              h('span', { className: 'dgs-status-dot ' + stKey }),
+              h('span', { className: 'dgs-status-text ' + stKey }, stLabel),
+              meta.length ? h('span', { className: 'dgs-status-meta' }, meta.join(' · ')) : null) : null),
+          unreachable ? h('div', { className: 'dgs-err', style: { marginBottom: 8 } }, t('stFetchErr')) : null,
+          status && status.error ? h('div', { className: 'dgs-err', style: { marginBottom: 8 } }, status.error) : null,
           h('div', { className: 'dgs-row' },
             h('label', null, '启用'),
             h('input', { type: 'checkbox', checked: form.enabled, onChange: (e) => setForm({ ...form, enabled: e.target.checked }) })),

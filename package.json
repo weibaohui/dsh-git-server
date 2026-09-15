@@ -24,6 +24,10 @@
     "cordis.patch.yml",
     "README.md"
   ],
+  "engines": {
+    "node": ">=22.5",
+    "dsh": ">=0.1.2-rc.1"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -56,9 +60,6 @@
     "busboy": "^1.6.0",
     "ini": "^5.0.0",
     "marked": "^15.0.0"
-  },
-  "engines": {
-    "node": ">=22.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

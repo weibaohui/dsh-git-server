@@ -21,6 +21,7 @@ function testHost() {
   return {
     registered,
     webServer: { register: (r) => registered.routes.push(r) },
+    connection: { requestRejection: () => undefined },
     settings: {
       register(ns, schema, opts) {
         let data = { ...(opts && opts.base) }

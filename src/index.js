@@ -25,7 +25,7 @@ const path = require('node:path')
 const engine = require('./runner')
 
 const name = engine.PLUGIN_ID
-const inject = ['webServer', 'settings']
+const inject = ['webServer', 'settings', 'connection']
 const API_PREFIX = '/' + engine.PLUGIN_ID + '/api'
 const SETTINGS_NS = engine.PLUGIN_ID
 
@@ -452,6 +452,14 @@ module.exports = {
           kind: 'prefix',
           path: API_PREFIX,
           handler: async (req, res) => {
+            // 与其它 host 路由一致的信任栅栏：connection 服务的 Host/Origin 检查
+            // 加浏览器认证，防止本机任意网页跨站调用。
+            const rejection = ctx.connection.requestRejection(req)
+            if (rejection !== undefined) {
+              res.writeHead(rejection)
+              res.end()
+              return
+            }
             const url = new URL(req.url || '/', 'http://dsh.local')
             const rest = url.pathname.slice(API_PREFIX.length)
             try {

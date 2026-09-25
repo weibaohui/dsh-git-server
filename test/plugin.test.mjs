@@ -15,23 +15,20 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const plugin = (await import('../src/index.js')).default
 const runner = await import('../src/runner.js')
 
-function testHost() {
+function testHost(rejection) {
   // 极简宿主：只实现插件用到的 settings/webServer/slots 形状
-  const registered = { settings: null, routes: [] }
+  // 0.1.7 settings 服务：describe() 返回空（本命名空间无文档），
+  // 写值走 update；变更通知走 ctx.on('settings/document-updated', …)。
+  const registered = { events: [], routes: [] }
   return {
     registered,
     webServer: { register: (r) => registered.routes.push(r) },
-    connection: { requestRejection: () => undefined },
+    connection: { requestRejection: () => rejection },
     settings: {
-      register(ns, schema, opts) {
-        let data = { ...(opts && opts.base) }
-        registered.settings = {
-          get: () => data,
-          update: async (patch) => { data = { ...data, ...patch } },
-        }
-        return registered.settings
-      },
+      describe: () => [],
+      update: async () => {},
     },
+    on(event) { registered.events.push(event); return () => {} },
     _cleanups: [],
     effect(fn) { try { const c = fn && fn(); if (typeof c === 'function') this._cleanups.push(c) } catch {} },
     logger: { info() {}, warn() {}, error() {} },
@@ -73,8 +70,8 @@ test('writeAppIni: 渲染关键配置且幂等', () => {
 test('插件 apply：注册 settings 与同源路由，disabled 不启动子进程', async () => {
   const host = testHost()
   const dataDir = mkdtempSync(join(tmpdir(), 'dgs-data-'))
-  // 极简可链式 Schema 桩：boolean()/string()/number().step().min().max().default()
-  const chainish = () => { const o = { default: (d) => d }; return o }
+  // 极简可链式 Schema 桩：boolean()/string()/number().step().min().max().default().volatile()
+  const chainish = () => { const o = { default: () => o, volatile: () => o }; return o }
   const FakeSchema = {
     object: (def) => def,
     boolean: () => chainish(),
@@ -84,7 +81,8 @@ test('插件 apply：注册 settings 与同源路由，disabled 不启动子进�
   plugin.__internals.__seedSchema(FakeSchema)
   plugin.apply(host, { enabled: false, dataDir })
   await new Promise((r) => setTimeout(r, 300))
-  assert.ok(host.registered.settings, 'settings 未注册')
+  assert.ok(plugin.Config, 'Config schema 未导出')
+  assert.ok(host.registered.events.includes('settings/document-updated'), 'settings 变更未订阅')
   assert.equal(host.registered.routes.length, 1)
   assert.deepEqual(host.registered.routes.map((r) => r.path),
     ['/dsh-git-server/api'])
@@ -206,4 +204,17 @@ test('端到端：子进程启动 → git clone/push → user-management 凭据 
     console.log('first attempt failed:', String(e.message).slice(0, 100), '— retrying')
     await runE2EAttempt()
   }
+})
+
+test('每个路由都位于 connection 信任栅栏之后', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'dgs-fence-'))
+  const host = testHost(401)
+  plugin.__internals.__seedSchema({ object: (def) => def, boolean: () => { const o = { default: () => o, volatile: () => o }; return o }, string: () => { const o = { default: () => o, volatile: () => o }; return o }, number: () => { const c = { default: () => c, volatile: () => c }; c.step = () => c; c.min = () => c; c.max = () => c; return c } })
+  plugin.apply(host, { enabled: false, dataDir })
+  await new Promise((r) => setTimeout(r, 50))
+  assert.ok(host.registered.routes.length >= 1)
+  const route = host.registered.routes[0]
+  const res = { statusCode: null, body: null, writeHead(s) { res.statusCode = s }, end(b) { res.body = b } }
+  route.handler({ method: 'GET', url: '/dsh-git-server/api/info/refs?service=git-upload-pack', headers: {} }, res)
+  assert.equal(res.statusCode, 401, 'unauthenticated git request is refused')
 })

@@ -1,7 +1,7 @@
 {
   "name": "@weibaohui/dsh-git-server",
-  "version": "0.1.2",
-  "description": "dsh 插件 · Git 服务器：内嵌 ts-gogs（Gogs 的 TypeScript 平替），独立端口跑完整 Git 服务（HTTP clone/push、网页端、issue/PR/wiki），可复用 user-management 的用户名密码，设置页一键启停。",
+  "version": "0.1.3",
+  "description": "dsh 插件 · Git 服务器：独立端口跑完整 Git 服务（HTTP clone/push、网页端、issue/PR/wiki/发版/标签/里程碑/webhook），可复用 user-management 账号，局域网可 clone，设置页一键启停、崩溃自动拉起。",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/weibaohui/dsh-git-server.git"
@@ -26,7 +26,7 @@
   ],
   "engines": {
     "node": ">=22.5",
-    "dsh": ">=0.1.2-rc.1"
+    "dsh": ">=0.1.7-rc.2"
   },
   "dsh": {
     "bundle": {

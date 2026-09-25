@@ -29,12 +29,12 @@ const inject = ['webServer', 'settings', 'connection']
 const API_PREFIX = '/' + engine.PLUGIN_ID + '/api'
 const SETTINGS_NS = engine.PLUGIN_ID
 
-// ── schemastery 加载（settings 服务同源；缺席时仅 loader config 生效）──────
+// ── schemastery：从宿主 dsh 全局安装的 vendored 副本同步加载（0.1.7 起
+//    settings 服务通过 entry.fiber.runtime.Config 自动发现 schema，不再支持
+//    ctx.settings.register，故必须在模块顶层同步构建导出的 Config）。加载
+//    失败则 Config 缺席，插件仍可运行（退回进程内兜底）。
 
-const { pathToFileURL } = require('node:url')
 const os = require('node:os')
-
-let schemaPromise = null
 
 function hostCandidatePaths(pkgName, rel) {
   const prefixes = [process.env.DSH_GLOBAL_PREFIX, os.homedir() + '/.local'].filter(Boolean)
@@ -43,64 +43,54 @@ function hostCandidatePaths(pkgName, rel) {
   )
 }
 
-function startSchemaLoader() {
-  if (!schemaPromise) {
-    schemaPromise = (async () => {
-      const candidates = [
-        ...hostCandidatePaths('schemastery', 'lib/index.cjs'),
-        '@deepseek-ai/schemastery',
-      ]
-      const errors = []
-      for (const target of candidates) {
-        try {
-          const specifier = target.includes('/') && !target.startsWith('@') && target.includes('node_modules')
-            ? pathToFileURL(target).href
-            : target
-          const mod = await import(specifier)
-          return mod
-        } catch (e) {
-          errors.push(`${target}: ${String((e && e.message) || e).slice(0, 160)}`)
-        }
-      }
-      throw new Error(errors.join(' | '))
-    })()
+// 同步加载 schemastery（CJS 副本优先，与宿主 settings 服务同源）。
+function loadSchemaSync() {
+  for (const target of hostCandidatePaths('schemastery', 'lib/index.cjs')) {
+    try { return require(target) } catch {}
   }
-  return schemaPromise
+  try { return require('@deepseek-ai/schemastery') } catch {}
+  return null
 }
 
-async function resolveSchema() {
-  try {
-    const mod = await startSchemaLoader()
-    if (!mod) return null
-    const Schema = mod.default || mod.Schema || (typeof mod === 'function' ? mod : null)
-    return Schema && typeof Schema.object === 'function' ? Schema : null
-  } catch {
-    return null
-  }
-}
-
+// 测试缝隙：预先注入 Schema，让单测不依赖本机宿主安装
+let __schemaOverride = null
 function __seedSchema(Schema) {
-  schemaPromise = Promise.resolve(Schema ? { default: Schema } : null)
+  __schemaOverride = Schema
+  Config = settingsSchema(Schema)
+  module.exports.Config = Config
 }
 
-function settingsSchema(Schema) {
-  if (!Schema || typeof Schema.object !== 'function') return null
-  return Schema.object({
-    enabled: Schema.boolean().default(engine.DEFAULTS.enabled),
-    port: Schema.number().step(1).min(engine.NUM_RANGES.port[0]).max(engine.NUM_RANGES.port[1]).default(engine.DEFAULTS.port),
-    dataDir: Schema.string().default(engine.DEFAULTS.dataDir),
-    adminPassword: Schema.string().default(engine.DEFAULTS.adminPassword),
-    impersonateSecret: Schema.string().default(engine.DEFAULTS.impersonateSecret),
+// 兼容旧调用方（单测）：异步解析到同一份 Schema 或 null
+async function resolveSchema() {
+  const S = __schemaOverride || loadSchemaSync()
+  return S && typeof S.object === 'function' ? S : null
+}
+
+function settingsSchema(S) {
+  if (!S || typeof S.object !== 'function') return null
+  // 字段标 .volatile()：0.1.7 settings 服务只把 volatile 字段投进设置 UI，
+  // 且只有 volatile 字段可经 ctx.settings.update 在线写回。
+  return S.object({
+    enabled: S.boolean().default(engine.DEFAULTS.enabled).volatile(),
+    port: S.number().step(1).min(engine.NUM_RANGES.port[0]).max(engine.NUM_RANGES.port[1]).default(engine.DEFAULTS.port).volatile(),
+    dataDir: S.string().default(engine.DEFAULTS.dataDir).volatile(),
+    adminPassword: S.string().default(engine.DEFAULTS.adminPassword).volatile(),
+    impersonateSecret: S.string().default(engine.DEFAULTS.impersonateSecret).volatile(),
   })
 }
+
+// 0.1.7 settings 服务自动发现模块导出的 Config（entry.fiber.runtime.Config）。
+const Schema = __schemaOverride || loadSchemaSync()
+let Config = settingsSchema(Schema)
 
 // ── 插件 ─────────────────────────────────────────────────────────────────
 
 module.exports = {
   name,
   inject,
+  Config,
   version: '0.1.0',
-  __internals: { settingsSchema, resolveSchema, __seedSchema, API_PREFIX, SETTINGS_NS },
+  __internals: { settingsSchema, loadSchemaSync, resolveSchema, __seedSchema, API_PREFIX, SETTINGS_NS },
 
   apply(ctx, config) {
     // 宿主可能过滤插件 logger 输出；console.error 走 stderr 保底可见（launchd 下进 err.log）
@@ -113,8 +103,8 @@ module.exports = {
     const webServer = ctx.webServer
 
     const base = engine.normalizeConfig({ ...engine.DEFAULTS, ...(config || {}) })
-    let settingsScope = null
-    let memoryPatch = {}
+    let liveSettings = {} // 0.1.7：settings 文档里的实时 volatile 值（事件驱动刷新）
+    let memoryPatch = {} // settings 写回失败时的进程内兜底
     let pwFileCache = null
 
     const state = { handle: null, fingerprint: '', error: null, restarting: 0, deps: 'ok' }
@@ -155,9 +145,9 @@ module.exports = {
         return
       }
       const pw = engine.generateSecret().slice(0, 20)
-      if (settingsScope && typeof settingsScope.update === 'function') {
+      if (ctx.settings && typeof ctx.settings.update === 'function') {
         try {
-          await settingsScope.update({ adminPassword: pw })
+          await ctx.settings.update(SETTINGS_NS, { adminPassword: pw })
         } catch (e) {
           logger.warn(`dsh-git-server: 管理员密码写入 settings 失败，退回文件: ${(e && e.message) || e}`)
           memoryPatch.adminPassword = pw
@@ -253,8 +243,8 @@ module.exports = {
       memoryPatch.impersonateSecret = pw
       cfg.impersonateSecret = pw
       if (fromFile) return
-      if (settingsScope && typeof settingsScope.update === 'function') {
-        try { await settingsScope.update({ impersonateSecret: pw }) } catch (e) {
+      if (ctx.settings && typeof ctx.settings.update === 'function') {
+        try { await ctx.settings.update(SETTINGS_NS, { impersonateSecret: pw }) } catch (e) {
           logger.warn(`dsh-git-server: impersonate secret 写入 settings 失败，退回文件: ${(e && e.message) || e}`)
           writeImpersonateFile(pw)
         }
@@ -317,11 +307,20 @@ module.exports = {
       }
     }
 
+    // 0.1.7：读取本命名空间在 settings 文档里的实时值（describe 投影后的 volatile 字段）。
+    // 没有 Config 或 settings 服务缺席时返回 {}，effective() 退回 base + memoryPatch。
+    function readLiveSettings() {
+      try {
+        if (!ctx.settings || typeof ctx.settings.describe !== 'function') return {}
+        const d = ctx.settings.describe().find((x) => x.ns === SETTINGS_NS)
+        return d && d.value ? d.value : {}
+      } catch {
+        return {}
+      }
+    }
+
     function effective() {
-      const fromSettings = settingsScope && typeof settingsScope.get === 'function'
-        ? settingsScope.get()
-        : null
-      return engine.normalizeConfig({ ...base, ...(fromSettings || {}), ...memoryPatch })
+      return engine.normalizeConfig({ ...base, ...liveSettings, ...memoryPatch })
     }
 
     let restartTimer = null
@@ -384,20 +383,25 @@ module.exports = {
       return status()
     }
 
-    // ── settings 注册（异步；缺席不阻塞宿主半其余功能）───────────────────
+    // ── settings 接线（0.1.7：导出 Config 即自动注册 schema + 自动生成设置
+    //    页面；这里只订阅文档变更刷新缓存，再 reconcile。settings 服务缺席或
+    //    Config 未构建时退回进程内兜底，不阻塞宿主半其余功能。）──────────────
     ;(async () => {
-      const Schema = await resolveSchema()
-      if (Schema && ctx.settings && typeof ctx.settings.register === 'function') {
-        try {
-          settingsScope = ctx.settings.register(SETTINGS_NS, settingsSchema(Schema), { base })
-          logger.info('dsh-git-server: settings-registered')
-        } catch (e) {
-          logger.warn(`dsh-git-server: settings register 失败（仅 loader config 生效）: ${(e && e.message) || e}`)
-        }
-      } else {
+      liveSettings = readLiveSettings()
+      if (!Config) {
         logger.warn(
-          `dsh-git-server: settings 不可用（Schema=${Boolean(Schema)}, ctx.settings=${Boolean(ctx.settings)}）——配置退回进程内兜底`,
+          `dsh-git-server: Config schema 未构建（schemastery 未加载）——配置退回进程内兜底`,
         )
+      }
+      if (ctx.on && typeof ctx.on === 'function') {
+        ctx.effect(() => {
+          const off = ctx.on('settings/document-updated', (ns) => {
+            if (ns !== SETTINGS_NS) return
+            liveSettings = readLiveSettings()
+            reconcile().catch((e) => logger.error(`dsh-git-server: reconcile: ${(e && e.message) || e}`))
+          })
+          return () => { try { off() } catch {} }
+        }, 'dsh-git-server: settings watch')
       }
       await reconcile()
     })().catch((e) => logger.error(`dsh-git-server: init: ${(e && e.message) || e}`))
@@ -654,9 +658,9 @@ module.exports = {
                 const patch = engine.sanitizePatch(patchBody, effective())
                 memoryPatch = { ...memoryPatch, ...patch }
                 if (typeof patch.adminPassword === 'string' && patch.adminPassword) writePasswordFile(patch.adminPassword)
-                if (settingsScope && typeof settingsScope.update === 'function') {
+                if (ctx.settings && typeof ctx.settings.update === 'function') {
                   try {
-                    await settingsScope.update(patch)
+                    await ctx.settings.update(SETTINGS_NS, patch)
                   } catch (e) {
                     logger.warn(`dsh-git-server: settings update 失败（仅本次进程生效）: ${(e && e.message) || e}`)
                   }

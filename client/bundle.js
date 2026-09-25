@@ -12,8 +12,8 @@ window.__ModuleLoader__.load({
      * @weibaohui/dsh-git-server — Browser half（原生 dsh 插件 UI，无 iframe/桥接）。
      *
      * 两个面：
-     *  1. sidebar.footer.action「Git」→ 全屏管理页（仓库列表/建仓/删除 +
-     *     仓库浏览：文件树/文件内容/提交/分支/工单[列表/新建/评论/开关]）。
+     *  1. sidebar.footer.action「Git」→ 中栏接管管理页（taskboard 同款，盖会话列不盖侧栏；
+     *     仓库列表/建仓/删除 + 仓库浏览：文件树/文件内容/提交/分支/工单[列表/新建/评论/开关]）。
      *  2. settings.section「Git 服务器」→ 服务配置（启停/端口/数据目录/兜底密码）。
      *
      * 数据通道：宿主同源路由 /dsh-git-server/api/*（dsh 登录门禁保护，
@@ -37,6 +37,12 @@ window.__ModuleLoader__.load({
     // ── locale ────────────────────────────────────────────────────────────────
 
     const NS = 'dshGitServer'
+    // 中栏接管（taskboard 同款）开合属性 + 互斥协议
+    const DGS_ACTIVE_ATTR = 'data-dsh-git-active'
+    const DGS_PANEL_NAME = 'dsh-git'
+    const DGS_ACTIVATE_EVENT = 'dsh-panel-activate'
+    const DGS_OTHER_ACTIVE_ATTRS = ['data-dsh-atb-active', 'data-dsh-taskboard-active', 'data-dsh-ssh-active', 'data-dsh-prc-active', 'data-dsh-kb-active']
+    const DGS_SIDEBAR_ROW_SELECTOR = '[class*="sessionRow"], [class*="projectRow"], [class*="searchResultRow"], [class*="newSession"]'
     const ZH = {
       nav: 'Git', title: '代码仓库',
       myRepos: '我的仓库', newRepo: '新建仓库', repoName: '仓库名', private: '私有',
@@ -94,7 +100,16 @@ window.__ModuleLoader__.load({
       holder.id = 'dgs-styles'
       holder.style.display = 'none'
       holder.innerHTML = `<style>
-    .dgs-page{position:fixed;inset:0;z-index:2147483000;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);font-size:14px}
+    /* 中栏接管视图（taskboard 同款）：容器挂进会话列末尾，html 属性驱动开合，只隐藏列内兄弟。
+     * 三代壳层选择器：dev shell data-pane / 官方 CSS-Module centerCol / Desktop 扩展框。 */
+    .dsh-git-view{display:none}
+    html[data-dsh-git-active] [data-pane="conversation"] > *:not([data-dsh-git-view]),
+    html[data-dsh-git-active] [class*="centerCol"] > *:not([data-dsh-git-view]),
+    html[data-dsh-git-active] .dshDesktopConversationSurface > *:not([data-dsh-git-view]){display:none !important}
+    html[data-dsh-git-active] .dsh-git-view{display:flex;flex-direction:column;height:100%;overflow:hidden}
+    /* 壳层退化（会话列缺席）：容器兜底挂 body 时退回全屏浮层，保证入口点击永远有响应 */
+    .dsh-git-view[data-dsh-git-fallback]{position:fixed;inset:0;z-index:2147483000;display:flex}
+    .dgs-page{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);font-size:14px}
     .dgs-head{display:flex;align-items:center;gap:12px;padding:12px 28px;border-bottom:1px solid var(--dsw-alias-border-l2);flex:none}
     .dgs-h1{font-size:16px;font-weight:700;margin:0}
     .dgs-close{margin-left:auto;cursor:pointer;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:18px;padding:4px 8px;border-radius:8px}
@@ -2050,7 +2065,7 @@ window.__ModuleLoader__.load({
 
     // ── 主页（仓库列表 + 建仓） ────────────────────────────────────────────────
 
-    function GitPage({ onClose, t }) {
+    function GitPage({ onClose, t, standalone }) {
       useEffect(ensureStyles, [])
       const route = useHashRoute()
       const [me, setMe] = useState(null)
@@ -2069,6 +2084,33 @@ window.__ModuleLoader__.load({
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
       }, [onClose])
+      // 中栏接管开合：挂载即打开 → html[data-dsh-git-active] + 广播互斥事件；卸载（关闭）时清理。
+      // standalone（__boot 开发挂载）不动全局。
+      useEffect(() => {
+        if (standalone) return undefined
+        for (const attr of DGS_OTHER_ACTIVE_ATTRS) document.documentElement.removeAttribute(attr)
+        document.documentElement.setAttribute(DGS_ACTIVE_ATTR, '')
+        document.dispatchEvent(new CustomEvent(DGS_ACTIVATE_EVENT, { detail: DGS_PANEL_NAME }))
+        return () => { document.documentElement.removeAttribute(DGS_ACTIVE_ATTR) }
+      }, [standalone])
+      useEffect(() => {
+        if (standalone) return undefined
+        const onOther = (e) => { if (e && e.detail !== DGS_PANEL_NAME) onClose() }
+        document.addEventListener(DGS_ACTIVATE_EVENT, onOther)
+        return () => document.removeEventListener(DGS_ACTIVATE_EVENT, onOther)
+      }, [standalone, onClose])
+      // 点侧栏会话行自动关面板（自家入口子树豁免）
+      useEffect(() => {
+        if (standalone) return undefined
+        const onClickRow = (e) => {
+          const target = e.target
+          if (!(target instanceof Element)) return
+          if (target.closest('[' + GIT_ENTRY_ATTR + ']')) return
+          if (target.closest(DGS_SIDEBAR_ROW_SELECTOR)) onClose()
+        }
+        document.addEventListener('click', onClickRow, true)
+        return () => document.removeEventListener('click', onClickRow, true)
+      }, [standalone, onClose])
       const notify = (m) => { setToast(m); setTimeout(() => setToast(''), 1600) }
       const seg = route.split('/').filter(Boolean)
       const view = seg[0] || 'repos'
@@ -2214,10 +2256,21 @@ window.__ModuleLoader__.load({
       try { gitPageHost.el.remove() } catch {}
       gitPageHost = null
     }
+    function gitConversationColumn() {
+      return document.querySelector('[data-pane="conversation"], [class*="centerCol"], .dshDesktopConversationSurface')
+    }
     function openGitPage(t) {
       if (gitPageHost) { closeGitPage(); return }
       const el = document.createElement('div')
-      document.body.appendChild(el)
+      el.setAttribute('data-dsh-git-view', '')
+      el.className = 'dsh-git-view'
+      const column = gitConversationColumn()
+      if (column) {
+        column.appendChild(el)
+      } else {
+        el.setAttribute('data-dsh-git-fallback', '')
+        document.body.appendChild(el)
+      }
       const root = require('react-dom/client').createRoot(el)
       gitPageHost = { el, root }
       root.render(h(GitPage, { onClose: closeGitPage, t }))
@@ -2269,6 +2322,7 @@ window.__ModuleLoader__.load({
     .dsh-git-entry .dsh-git-entry-stats{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--dsw-alias-label-secondary,var(--dsw-text-secondary,gray));font-variant-numeric:tabular-nums;white-space:nowrap}
     .dsh-git-entry .dsh-git-entry-dot{width:6px;height:6px;border-radius:6px;background:var(--dsw-alias-state-success-primary);display:inline-block}
     [data-sidebar-collapsed] .dsh-git-entry,[class*="_collapsed"] .dsh-git-entry{width:36px;height:36px;min-width:36px;margin:0 0 12px;padding:0;justify-content:center;gap:0;text-align:center}
+    html[data-dsh-git-active] .dsh-git-entry{background:var(--dsw-active,rgba(128,128,128,.18));color:var(--dsw-text-primary,inherit);font-weight:500}
     [data-sidebar-collapsed] .dsh-git-entry .dsh-git-entry-label,[data-sidebar-collapsed] .dsh-git-entry .dsh-git-entry-stats,[class*="_collapsed"] .dsh-git-entry .dsh-git-entry-label,[class*="_collapsed"] .dsh-git-entry .dsh-git-entry-stats{display:none}
     `
         document.head.appendChild(style)
@@ -2368,7 +2422,7 @@ window.__ModuleLoader__.load({
         ensureStyles()
         let t = opts.t || ((key) => ZH[key] ?? EN[key] ?? key)
         const root = require('react-dom/client').createRoot(container)
-        root.render(h(GitPage, { onClose: () => {}, t }))
+        root.render(h(GitPage, { onClose: () => {}, t, standalone: true }))
         return root
       },
       apply(ctx) {

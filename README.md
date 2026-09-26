@@ -69,56 +69,56 @@ dsh plugin --profile web add @weibaohui/dsh-git-server -w
 
 | 仓库列表 | 从 URL 导入/镜像 |
 |---|---|
-| ![主页](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/home.png) | ![导入](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/import-repo.png) |
+| ![主页](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/home.png) | ![导入](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/import-repo.png) |
 
 ### 代码浏览
 
 | 文件树+README | 语法高亮 | Blame | 文件历史 | 空仓库推送引导 |
 |---|---|---|---|---|
-| ![文件树](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/repo-files.png) | ![高亮](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/file-highlight.png) | ![blame](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/blame.png) | ![历史](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/file-history.png) | ![空仓库](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/empty-repo-guide.png) |
+| ![文件树](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/repo-files.png) | ![高亮](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/file-highlight.png) | ![blame](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/blame.png) | ![历史](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/file-history.png) | ![空仓库](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/empty-repo-guide.png) |
 
 | 提交历史 | 提交 diff | 仓库内代码搜索 |
 |---|---|---|
-| ![提交](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/commits.png) | ![diff](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/commit-diff.png) | ![搜索](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/code-search.png) |
+| ![提交](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/commits.png) | ![diff](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/commit-diff.png) | ![搜索](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/code-search.png) |
 
 | 分支概况 | 分支与标签 |
 |---|---|
-| ![分支](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/branches.png) | ![分支标签](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/branches-all.png) |
+| ![分支](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/branches.png) | ![分支标签](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/branches-all.png) |
 
 ### 工单 / PR / 协作
 
 | 工单列表 | 工单详情 | 新工单 |
 |---|---|---|
-| ![工单](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/issues.png) | ![工单详情](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/issue-detail.png) | ![新工单](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/new-issue.png) |
+| ![工单](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/issues.png) | ![工单详情](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/issue-detail.png) | ![新工单](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/new-issue.png) |
 
 | 标签管理 | 里程碑 | PR 列表 |
 |---|---|---|
-| ![标签](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/labels.png) | ![里程碑](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/milestones.png) | ![PR](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/pulls.png) |
+| ![标签](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/labels.png) | ![里程碑](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/milestones.png) | ![PR](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/pulls.png) |
 
 | PR 评审与合并 | 已合并 PR（评审记录） |
 |---|---|
-| ![PR评审](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/pr-open.png) | ![PR已合并](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/pr-merged.png) |
+| ![PR评审](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/pr-open.png) | ![PR已合并](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/pr-merged.png) |
 
 | 通知中心 | 我的工单聚合 | 星标/复刻弹层 |
 |---|---|---|
-| ![通知](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/notifications.png) | ![我的工单](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/my-issues.png) | ![星标](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/star-popup.png) |
+| ![通知](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/notifications.png) | ![我的工单](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/my-issues.png) | ![星标](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/star-popup.png) |
 
 ### Wiki / 发版
 
 | Wiki 页面 | 发版（含二进制附件） |
 |---|---|
-| ![wiki](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/wiki.png) | ![发版](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/releases.png) |
+| ![wiki](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/wiki.png) | ![发版](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/releases.png) |
 
 ### 仓库设置
 
 | 协作者（三档权限） | 分支保护 | Webhook 与投递记录 | 镜像同步 | 危险区域 |
 |---|---|---|---|---|
-| ![协作者](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/settings-collaborators.png) | ![分支保护](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/settings-branch-protection.png) | ![webhook](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/settings-webhooks.png) | ![镜像](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/settings-mirror.png) | ![危险区域](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/settings-danger.png) |
+| ![协作者](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/settings-collaborators.png) | ![分支保护](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/settings-branch-protection.png) | ![webhook](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/settings-webhooks.png) | ![镜像](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/settings-mirror.png) | ![危险区域](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/settings-danger.png) |
 
 ### 全局页面
 
 | 探索 | 组织 | 用户主页 | 管理面板 |
 |---|---|---|---|
-| ![探索](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/explore.png) | ![组织](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/org.png) | ![用户](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/profile.png) | ![管理](https://raw.githubusercontent.com/weibaohui/dsh-git-server/main/docs/admin.png) |
+| ![探索](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/explore.png) | ![组织](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/org.png) | ![用户](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/profile.png) | ![管理](https://cdn.jsdelivr.net/gh/weibaohui/dsh-git-server@main/docs/admin.png) |
 
 </details>

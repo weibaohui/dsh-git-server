@@ -3,3 +3,5 @@ test-artifacts/
 data/
 *.log
 server/dist/
+.DS_Store
+dist/

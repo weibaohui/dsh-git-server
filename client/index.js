@@ -208,6 +208,24 @@ textarea.dgs-input,.dgs-card>.dgs-input{width:100%;box-sizing:border-box;flex:no
 .dgs-md blockquote{border-left:3px solid var(--dsw-alias-border-l2);margin:8px 0;padding:2px 12px;color:var(--dsw-alias-label-secondary)}
 .dgs-md table{border-collapse:collapse}
 .dgs-md td,.dgs-md th{border:1px solid var(--dsw-alias-border-l2);padding:4px 10px}
+/* 语法高亮（亮暗双主题可读配色） */
+.tok-k{color:#cf222e;font-weight:500}
+.tok-s{color:#1a7f37}
+.tok-c{color:#6e7781;font-style:italic}
+.tok-n{color:#0550ae}
+.tok-b{color:#953800}
+@media (prefers-color-scheme: dark){
+.tok-k{color:#ff7b72}
+.tok-s{color:#7ee787}
+.tok-c{color:#8b949e}
+.tok-n{color:#79c0ff}
+.tok-b{color:#ffa657}
+}
+.dgs-hit{padding:4px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);cursor:pointer}
+.dgs-hit:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dgs-hit-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-all}
+.dgs-notif-dot{display:inline-block;min-width:16px;height:16px;line-height:16px;text-align:center;border-radius:999px;background:var(--dsw-alias-state-error-primary);color:#fff;font-size:10px;font-weight:700;padding:0 4px;margin-left:4px}
+.dgs-guide{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;background:var(--dsw-alias-markdown-code-block);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:10px 14px;margin:6px 0;white-space:pre-wrap;word-break:break-all}
 </style>`
   document.head.appendChild(holder)
 }
@@ -237,25 +255,133 @@ function useHashRoute() {
 }
 const nav = (hash) => { location.hash = hash }
 
+// ── 语法高亮（零依赖：无 bundler，客户端不能 import，内置一个轻量 tokenizer） ──
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+const HL = (() => {
+  const KW = {
+    clike: 'abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while true false null',
+    js: 'const let var function return if else for while do switch case break continue class extends new delete typeof instanceof in of async await yield import export from default try catch finally throw this super static get set null undefined true false',
+    py: 'def class return if elif else for while import from as with try except finally raise lambda pass break continue global nonlocal yield assert async await in is not and or del print None True False self cls',
+    go: 'func return if else for range switch case break continue go defer select chan map struct interface package import const var type fallthrough default nil true false iota',
+    rs: 'fn let mut pub struct enum impl trait for while loop if else match return use mod crate self Self super const static type where async await move ref break continue in as dyn unsafe extern true false None Some Ok Err',
+    sh: 'if then else elif fi for while until do done case esac function return local export readonly declare shift eval exec source alias unalias set unset trap exit break continue in true false echo printf cd test',
+    sql: 'select from where insert into values update set delete join inner left right outer on group by order having limit offset as asc desc distinct union all create table alter drop index primary key foreign references not null default and or like in is between exists case when then else end',
+  }
+  const C = { line: '//[^\\n]*', block: '\\/\\*[\\s\\S]*?\\*\\/' }
+  const HASH = { line: '#[^\\n]*' }
+  const STR = ['"(?:\\\\.|[^"\\\\\\n])*"', "'(?:\\\\.|[^'\\\\\\n])*'", '`(?:\\\\.|[^`\\\\])*`']
+  const NUM = '\\b\\d[\\d_]*(?:\\.[\\d_]+)?(?:[eE][+-]?\\d+)?\\b'
+  const langs = {
+    js: { kw: KW.js, c: C }, mjs: { kw: KW.js, c: C }, cjs: { kw: KW.js, c: C }, jsx: { kw: KW.js, c: C },
+    ts: { kw: KW.js + ' interface type namespace declare readonly keyof infer never unknown any string number boolean', c: C },
+    tsx: { kw: KW.js + ' interface type namespace declare readonly keyof infer never unknown any string number boolean', c: C },
+    json: { kw: 'true false null', c: null },
+    py: { kw: KW.py, c: HASH }, rb: { kw: KW.py, c: HASH }, pl: { kw: KW.py, c: HASH },
+    go: { kw: KW.go, c: C },
+    rs: { kw: KW.rs, c: C },
+    java: { kw: KW.clike, c: C }, kt: { kw: KW.clike, c: C }, scala: { kw: KW.clike, c: C },
+    c: { kw: KW.clike, c: C }, h: { kw: KW.clike, c: C }, cpp: { kw: KW.clike, c: C }, cc: { kw: KW.clike, c: C }, cxx: { kw: KW.clike, c: C }, cs: { kw: KW.clike, c: C }, mm: { kw: KW.clike, c: C }, m: { kw: KW.clike, c: C },
+    sh: { kw: KW.sh, c: HASH }, bash: { kw: KW.sh, c: HASH }, zsh: { kw: KW.sh, c: HASH },
+    yaml: { kw: 'true false null yes no on off', c: HASH }, yml: { kw: 'true false null yes no on off', c: HASH },
+    toml: { kw: 'true false', c: HASH }, ini: { kw: 'true false', c: HASH }, cfg: { kw: 'true false', c: HASH },
+    sql: { kw: KW.sql, c: { line: '--[^\\n]*', block: C.block } },
+    css: { kw: '', c: { block: C.block } }, scss: { kw: '', c: C }, less: { kw: '', c: C },
+    dockerfile: { kw: 'FROM RUN CMD ENTRYPOINT COPY ADD WORKDIR EXPOSE ENV ARG VOLUME USER LABEL HEALTHCHECK ONBUILD SHELL STOPSIGNAL', c: HASH },
+    makefile: { kw: '', c: HASH },
+    vue: { kw: KW.js, c: C }, svelte: { kw: KW.js, c: C },
+  }
+  const byName = { dockerfile: 'dockerfile', makefile: 'makefile', 'cmakelists.txt': 'makefile' }
+  const cache = new Map()
+  function langFor(name) {
+    const lower = (name || '').toLowerCase()
+    const ext = byName[lower] || lower.split('.').pop() || ''
+    return langs[ext] || null
+  }
+  function regexFor(cfg) {
+    if (cache.has(cfg)) return cache.get(cfg)
+    const parts = []
+    if (cfg.c && cfg.c.block) parts.push(cfg.c.block)
+    if (cfg.c && cfg.c.line) parts.push(cfg.c.line)
+    parts.push(...STR, NUM)
+    if (cfg.kw) parts.push('\\b(?:' + cfg.kw.split(' ').join('|') + ')\\b')
+    const rx = new RegExp(parts.join('|'), 'g')
+    cache.set(cfg, rx)
+    return rx
+  }
+  return { langFor, regexFor }
+})()
+
+/** 源码 → 带 token 着色的 HTML（输入已转义）。 */
+function highlightCode(text, filename) {
+  const cfg = HL.langFor(filename)
+  if (!cfg) return escapeHtml(text)
+  const rx = HL.regexFor(cfg)
+  let out = ''
+  let last = 0
+  for (const m of text.matchAll(rx)) {
+    const i = m.index
+    if (i > last) out += escapeHtml(text.slice(last, i))
+    const tok = m[0]
+    let cls = 'tok-n'
+    if (/^\/\/|^\/\*|^#|^--/.test(tok)) cls = 'tok-c'
+    else if (/^["'`]/.test(tok)) cls = 'tok-s'
+    else if (/^\d/.test(tok)) cls = 'tok-n'
+    else cls = 'tok-k'
+    out += '<span class="' + cls + '">' + escapeHtml(tok) + '</span>'
+    last = i + tok.length
+  }
+  if (last < text.length) out += escapeHtml(text.slice(last))
+  return out
+}
+
+/** 提交/评论文本里的 #123 → 点击跳工单（返回 React 子节点数组）。 */
+function linkifyIssues(text, repo) {
+  const parts = String(text || '').split(/(#\d+)/g)
+  if (parts.length === 1) return text
+  return parts.map((p, i) => {
+    const m = /^#(\d+)$/.exec(p)
+    if (!m) return p
+    return h('a', {
+      key: i, style: { color: 'var(--dsw-alias-state-business-primary)', cursor: 'pointer' },
+      onClick: (e) => { e.stopPropagation(); nav('/r/' + repo.owner + '/' + repo.name + '/issues/' + m[1]) },
+    }, p)
+  })
+}
+
+function dirnameOf(p) {
+  const i = (p || '').lastIndexOf('/')
+  return i < 0 ? '' : p.slice(0, i)
+}
+
+
 // ── 全屏管理页 ────────────────────────────────────────────────────────────
 
-function RepoBrowser({ repo, t, onBack }) {
-  const [tab, setTab] = useState('files')
+function RepoBrowser({ repo, t, onBack, deep }) {
+  const [tab, setTab] = useState(() => {
+    const k = deep && deep.tab
+    return k && ['files', 'issues', 'pulls', 'wiki', 'releases', 'settings', 'commits', 'branches', 'tags'].includes(k) ? k : 'files'
+  })
   const [prPreset, setPrPreset] = useState(null)
   const [issuesSub, setIssuesSub] = useState(null)
   const [ov, setOv] = useState(null)
-  const [rev, setRev] = useState('')
+  const [rev, setRev] = useState(deep && deep.tab === 'src' ? deep.ref || '' : '')
   const [cloneUrl, setCloneUrl] = useState('')
   const [copied, setCopied] = useState(false)
   const [star, setStar] = useState(null)
   const [watch, setWatch] = useState(null)
   const [forkBusy, setForkBusy] = useState(false)
+  const [pop, setPop] = useState(null) // 'star' | 'watch' | 'fork' | null
+  const [forkList, setForkList] = useState(null)
   const [msg, setMsg] = useState('')
   useEffect(() => {
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/overview`).then((d) => {
       if (!d.defaultBranch) return
       setOv(d)
-      setRev(d.defaultBranch)
+      setRev((cur) => cur || d.defaultBranch)
     })
     fetch(API + '/status').then((r) => r.json()).then((st) => {
       if (st && st.running) setCloneUrl('git clone http://' + location.hostname + ':' + (st.port || 3400) + '/' + repo.owner + '/' + repo.name + '.git')
@@ -286,15 +412,37 @@ function RepoBrowser({ repo, t, onBack }) {
       h('span', { className: 'dgs-h1' }, repo.owner + '/' + repo.name),
       repo.private || (ov && ov.private) ? h('span', { className: 'dgs-badge pri' }, t('private')) : null,
       h('span', { style: { flex: 1 } }),
+      h('div', { style: { position: 'relative', display: 'flex', alignItems: 'center', gap: 10 } },
       star ? h('span', { className: 'dgs-labeled' },
         h('button', { className: 'dgs-btn ghost', onClick: () => toggle('star') }, star.on ? '★ Unstar' : '☆ Star'),
-        h('span', { className: 'dgs-labeled-count' }, star.count)) : null,
+        h('span', { className: 'dgs-labeled-count', style: { cursor: 'pointer' }, title: '谁点了星标', onClick: () => setPop(pop === 'star' ? null : 'star') }, star.count)) : null,
       watch ? h('span', { className: 'dgs-labeled' },
         h('button', { className: 'dgs-btn ghost', onClick: () => toggle('watch') }, watch.on ? '👁 Unwatch' : '👁 Watch'),
-        h('span', { className: 'dgs-labeled-count' }, watch.count)) : null,
-      h('button', { className: 'dgs-btn ghost', disabled: forkBusy, onClick: fork, style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
-        h('span', { style: { display: 'inline-flex', lineHeight: 0 }, dangerouslySetInnerHTML: { __html: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="3" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="3" r="1.7" fill="currentColor" stroke="none"/><circle cx="8" cy="13" r="1.7" fill="currentColor" stroke="none"/><path d="M4 4.7v2.8c0 .6.4 1 1 1h2.2M12 4.7v2.8c0 .6-.4 1-1 1H8.8M8 8.5v2.8"/></svg>' } }),
-        'Fork'),
+        h('span', { className: 'dgs-labeled-count', style: { cursor: 'pointer' }, title: '谁在关注', onClick: () => setPop(pop === 'watch' ? null : 'watch') }, watch.count)) : null,
+      h('span', { className: 'dgs-labeled' },
+        h('button', { className: 'dgs-btn ghost', disabled: forkBusy, onClick: fork, style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
+          h('span', { style: { display: 'inline-flex', lineHeight: 0 }, dangerouslySetInnerHTML: { __html: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="3" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="3" r="1.7" fill="currentColor" stroke="none"/><circle cx="8" cy="13" r="1.7" fill="currentColor" stroke="none"/><path d="M4 4.7v2.8c0 .6.4 1 1 1h2.2M12 4.7v2.8c0 .6-.4 1-1 1H8.8M8 8.5v2.8"/></svg>' } }),
+          'Fork'),
+        h('span', { className: 'dgs-labeled-count', style: { cursor: 'pointer' }, title: '复刻列表', onClick: () => {
+          if (pop === 'fork') { setPop(null); return }
+          setPop('fork')
+          if (forkList === null) api('GET', `/dsh/repos/${repo.owner}/${repo.name}/forks`).then((d) => setForkList(Array.isArray(d) ? d : []))
+        } }, ov ? ov.numForks || 0 : '')),
+      pop ? h('div', { className: 'dgs-card', style: { position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 50, minWidth: 230, maxHeight: 280, overflowY: 'auto', margin: 0, padding: '10px 12px' } },
+        h('div', { style: { fontWeight: 700, fontSize: 12.5, marginBottom: 6 } },
+          pop === 'star' ? '星标用户' : pop === 'watch' ? '关注者' : '复刻（Fork）'),
+        pop === 'fork'
+          ? (forkList === null ? h('div', { className: 'dgs-sub' }, t('loading'))
+              : forkList.length === 0 ? h('div', { className: 'dgs-sub' }, '—')
+              : forkList.map((f) => h('div', { key: f.owner + '/' + f.name, style: { padding: '3px 0' } },
+                  h('a', { className: 'dgs-sub', style: { color: 'var(--dsw-alias-state-business-primary)', cursor: 'pointer' }, onClick: () => { setPop(null); nav('/r/' + f.owner + '/' + f.name) } },
+                    f.owner + '/' + f.name + (f.stars ? ' ★' + f.stars : '')))))
+          : ((pop === 'star' ? (star && star.users) : (watch && watch.users)) || []).length === 0
+            ? h('div', { className: 'dgs-sub' }, '—')
+            : ((pop === 'star' ? star.users : watch.users) || []).map((u) =>
+                h('div', { key: u, style: { padding: '3px 0' } },
+                  h('a', { className: 'dgs-sub', style: { color: 'var(--dsw-alias-state-business-primary)', cursor: 'pointer' }, onClick: () => { setPop(null); nav('/u/' + u) } }, '@' + u))))
+      : null),
     ),
     msg ? h('div', { className: 'dgs-err' }, msg) : null,
     h('div', { className: 'dgs-tabs' },
@@ -325,19 +473,19 @@ function RepoBrowser({ repo, t, onBack }) {
           h('a', { className: 'dgs-btn ghost', style: { borderRadius: '0 8px 8px 0', borderLeft: 'none' }, href: `/dsh-git-server/api/dsh/repos/${repo.owner}/${repo.name}/archive/${encodeURIComponent(rev || 'master')}.zip`, download: `${repo.name}-${rev}.zip`, title: '下载' }, '⭳'))
         : null))
     : null,
-    tab === 'files' && h(FileTree, { repo, rev: rev || 'master', t, overview: ov, onOverview: setOv }),
+    tab === 'files' && h(FileTree, { repo, rev: rev || 'master', t, overview: ov, onOverview: setOv, cloneUrl, initialPath: deep && deep.tab === 'src' ? deep.filePath : '' }),
     tab === 'commits' && h(Commits, { repo, rev: rev || 'master', t }),
     tab === 'branches' && h(Branches, { repo, t, onNewPR: (head, base) => { setPrPreset({ head, base }); setTab('pulls') } }),
-    tab === 'issues' && h(IssuesArea, { repo, t, initialSub: issuesSub || undefined }),
-    tab === 'pulls' && h(Pulls, { repo, t, preset: prPreset, onPresetDone: () => setPrPreset(null), onGoIssuesSub: (k) => { setIssuesSub(k); setTab('issues') } }),
+    tab === 'issues' && h(IssuesArea, { repo, t, initialSub: issuesSub || undefined, initialIdx: deep && deep.tab === 'issues' && deep.arg ? Number(deep.arg) : undefined }),
+    tab === 'pulls' && h(Pulls, { repo, t, preset: prPreset, onPresetDone: () => setPrPreset(null), onGoIssuesSub: (k) => { setIssuesSub(k); setTab('issues') }, initialIdx: deep && deep.tab === 'pulls' && deep.arg ? Number(deep.arg) : undefined }),
     tab === 'wiki' && h(WikiView, { repo, t }),
     tab === 'releases' && h(Releases, { repo, t }),
     tab === 'settings' && h(RepoSettings, { repo, t }),
   )
 }
 
-function FileTree({ repo, rev, t, overview, onOverview }) {
-  const [path, setPath] = useState('')
+function FileTree({ repo, rev, t, overview, onOverview, initialPath, cloneUrl }) {
+  const [path, setPath] = useState(() => dirnameOf(initialPath || ''))
   const [entries, setEntries] = useState(null)
   const [file, setFile] = useState(null)
   const [err, setErr] = useState('')
@@ -351,6 +499,9 @@ function FileTree({ repo, rev, t, overview, onOverview }) {
   const [editText, setEditText] = useState('')
   const [editMsg, setEditMsg] = useState('')
   const [histMode, setHistMode] = useState(null)
+  const [searchQ, setSearchQ] = useState('')
+  const [hits, setHits] = useState(null) // null=未搜索；[]=无结果
+  const [deepDone, setDeepDone] = useState(false)
   const load = useCallback((p) => {
     setFile(null); setEntries(null); setErr(''); setBlameOn(false); setEditing(false); setHistMode(null)
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/tree?ref=${encodeURIComponent(rev)}&path=${encodeURIComponent(p)}`)
@@ -366,19 +517,37 @@ function FileTree({ repo, rev, t, overview, onOverview }) {
     if (p !== '') setReadme(null)
   }, [repo.owner, repo.name, rev])
   useEffect(() => { load(path) }, [load, path])
-  const openEntry = (e) => {
-    const p = e.path
-    if (e.type === 'dir' || e.type === 'tree') { setPath(p); return }
-    api('GET', `/repos/${repo.owner}/${repo.name}/raw?ref=${encodeURIComponent(rev)}&path=${encodeURIComponent(p)}`)
+  const openFile = (fp, name, size) => {
+    api('GET', `/repos/${repo.owner}/${repo.name}/raw?ref=${encodeURIComponent(rev)}&path=${encodeURIComponent(fp)}`)
       .then(async (d) => {
-        const isMd = /\.md$/i.test(e.name)
+        if (!d.ok) { setPath(fp); setFile(null); return } // 目录型永久链接：落到目录
+        const isMd = /\.md$/i.test(name)
         let html = ''
-        if (isMd && d.ok) {
+        if (isMd) {
           const r = await api('POST', '/dsh/markdown', { text: d.text })
           html = r.html || ''
         }
-        setFile({ name: e.name, text: d.ok ? d.text : null, size: e.size, isMd, html })
+        setFile({ name, path: fp, text: d.text, size: size || 0, isMd, html })
       })
+  }
+  const openEntry = (e) => {
+    if (e.type === 'dir' || e.type === 'tree') { setPath(e.path); return }
+    openFile(e.path, e.name, e.size)
+  }
+  // 深链直达：#/r/:o/:r/src/:ref/:path —— 打开指定文件（rev 由父组件同步）
+  useEffect(() => {
+    if (deepDone || !initialPath) return
+    setDeepDone(true)
+    openFile(initialPath, initialPath.split('/').pop(), 0)
+  }, [initialPath])
+  const doSearch = () => {
+    const q = searchQ.trim()
+    if (!q) return
+    setHits(null); setFile(null)
+    setMsg('')
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/search?q=${encodeURIComponent(q)}&ref=${encodeURIComponent(rev)}`)
+      .then((d) => { setHits(Array.isArray(d.matches) ? d.matches : []); if (d.error) setMsg(d.error) })
+      .catch(() => setMsg(t('loadFailed')))
   }
   const startCreate = (mode) => {
     setNewFile(mode); setMsg('')
@@ -410,6 +579,11 @@ function FileTree({ repo, rev, t, overview, onOverview }) {
             h('span', { className: 'dgs-crumb' + (i === arr.length - 1 ? ' cur' : ''), onClick: () => setPath(arr.slice(0, i + 1).join('/')) }, seg),
             i < arr.length - 1 ? h('span', { className: 'dgs-sub' }, '/') : null))),
       h('span', { style: { flex: 1 } }),
+      h('input', {
+        className: 'dgs-input', style: { maxWidth: 180, flex: 'none' }, placeholder: '搜索代码…',
+        value: searchQ, onChange: (e) => setSearchQ(e.target.value),
+        onKeyDown: (e) => { if (e.key === 'Enter') doSearch() },
+      }),
       h('button', { className: 'dgs-btn', onClick: () => startCreate('create') }, '新的文件'),
       h('button', { className: 'dgs-btn ghost', onClick: () => startCreate('upload') }, '上传文件')),
     msg ? h('div', { className: 'dgs-err' }, msg) : null,
@@ -448,15 +622,17 @@ function FileTree({ repo, rev, t, overview, onOverview }) {
           h('span', { style: { fontWeight: 600, fontSize: 12.5 } }, '📄 ' + file.name + ' ' + (file.size ? fmtSize(file.size) : '')),
           h('span', { style: { flex: 1 } }),
           file.text !== null ? h('a', { className: 'dgs-sub', style: { cursor: 'pointer', marginRight: 12 }, onClick: () => {
-            try { navigator.clipboard.writeText(location.origin + '/r/' + repo.owner + '/' + repo.name + '/src/' + encodeURIComponent(rev) + '/' + encodeURIComponent(path)) } catch {}
+            // 永久链接走面板的 hash 路由（旧网页 UI 已裁撤，裸路径链接是死的）
+            const link = location.origin + location.pathname + '#/r/' + repo.owner + '/' + repo.name + '/src/' + encodeURIComponent(rev) + '/' + (file.path || '').split('/').map(encodeURIComponent).join('/')
+            try { navigator.clipboard.writeText(link) } catch {}
             setMsg('✓ 已复制永久链接'); setTimeout(() => setMsg(''), 1500)
           } }, '永久链接') : null,
           file.text !== null ? h('a', { className: 'dgs-sub', style: { cursor: 'pointer', marginRight: 12 }, onClick: () => setHistMode(histMode === 'history' ? null : 'history') }, '文件历史') : null,
-          file.text !== null ? h('a', { className: 'dgs-sub', style: { marginRight: 12 }, href: `/dsh-git-server/api/repos/${repo.owner}/${repo.name}/raw?ref=${encodeURIComponent(rev)}&path=${encodeURIComponent(path)}`, target: '_blank', rel: 'noreferrer' }, '原始文件') : null,
+          file.text !== null ? h('a', { className: 'dgs-sub', style: { marginRight: 12 }, href: `/dsh-git-server/api/repos/${repo.owner}/${repo.name}/raw?ref=${encodeURIComponent(rev)}&path=${encodeURIComponent(file.path || path)}`, target: '_blank', rel: 'noreferrer' }, '原始文件') : null,
           file.text !== null ? h('button', { className: 'dgs-btn ghost', style: { padding: '2px 8px' }, onClick: () => { setEditing(true); setEditText(file.text || '') } }, '✏️') : null,
           file.text !== null ? h('button', { className: 'dgs-btn danger', style: { padding: '2px 8px' }, onClick: async () => {
             if (!confirm('删除文件 ' + file.name + ' ？')) return
-            const d = await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/files`, { path, branch: rev })
+            const d = await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/files`, { path: file.path || path, branch: rev })
             if (d && d.ok) { setFile(null); load(path) } else setMsg((d && d.error) || '删除失败')
           } }, '🗑️') : null,
           file.text !== null ? h('button', { className: 'dgs-btn ghost', style: { padding: '2px 8px' }, onClick: () => setBlameOn(!blameOn) }, 'Blame') : null),
@@ -468,19 +644,36 @@ function FileTree({ repo, rev, t, overview, onOverview }) {
             h('button', { className: 'dgs-btn ghost', onClick: () => setEditing(false) }, '取消'),
             h('button', { className: 'dgs-btn', disabled: busy, onClick: async () => {
               setBusy(true); setMsg('')
-              const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/files`, { path, branch: rev, content: editText, message: editMsg, overwrite: true })
+              const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/files`, { path: file.path || path, branch: rev, content: editText, message: editMsg, overwrite: true })
               setBusy(false)
-              if (d && d.ok) { setEditing(false); load(path) } else setMsg((d && d.error) || '保存失败')
+              if (d && d.ok) { setEditing(false); setFile(null); load(path) } else setMsg((d && d.error) || '保存失败')
             } }, '提交修改')))
-        : histMode === 'history' ? h(FileHistory, { repo, rev, path })
+        : histMode === 'history' ? h(FileHistory, { repo, rev, path: file.path || path })
         : blameOn && file.text !== null
-          ? h(BlameView, { repo, rev, path, text: file.text })
+          ? h(BlameView, { repo, rev, path: file.path || path, text: file.text })
           : file.isMd
             ? h('div', { className: 'dgs-md', style: { padding: '14px 16px' }, dangerouslySetInnerHTML: { __html: file.html || '' } })
-            : h('pre', { className: 'dgs-file', style: { border: 'none', borderRadius: 0 } }, file.text === null ? t('emptyFile') : file.text)))
+            : file.text === null
+              ? h('pre', { className: 'dgs-file', style: { border: 'none', borderRadius: 0 } }, t('emptyFile'))
+              : h('pre', { className: 'dgs-file', style: { border: 'none', borderRadius: 0 }, dangerouslySetInnerHTML: { __html: highlightCode(file.text, file.name) } })))
+    : hits !== null ? renderHits()
     : entries === null ? h('div', { className: 'dgs-empty' }, t('loading'))
     : renderDir(),
   )
+
+  function renderHits() {
+    return h('div', null,
+      h('div', { className: 'dgs-row', style: { marginBottom: 8 } },
+        h('button', { className: 'dgs-btn ghost', onClick: () => setHits(null) }, t('back')),
+        h('span', { className: 'dgs-sub' }, '在 ' + rev + ' 中搜索「' + searchQ.trim() + '」')),
+      hits.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
+        : hits.map((hit, i) =>
+            h('div', { key: i, className: 'dgs-hit', onClick: () => { setHits(null); setPath(dirnameOf(hit.path)); openFile(hit.path, hit.path.split('/').pop(), 0) } },
+              h('div', null,
+                h('span', { style: { color: 'var(--dsw-alias-state-business-primary)', fontWeight: 500, fontSize: 12.5 } }, hit.path),
+                h('span', { className: 'dgs-sub' }, ':' + hit.line)),
+              h('div', { className: 'dgs-hit-code' }, hit.text))))
+  }
 
   function renderDir() {
     const head = entries.find((e) => e.last)
@@ -498,7 +691,9 @@ function FileTree({ repo, rev, t, overview, onOverview }) {
       h('span', { style: { flex: 1 } }),
       h('span', { className: 'dgs-sub' }, timeAgo(head.last.date))) : null
     const table = entries.length === 0
-      ? h('div', { className: 'dgs-empty' }, t('emptyDir'))
+      ? (path === '' && overview && overview.numCommits === 0
+          ? renderEmptyRepoGuide()
+          : h('div', { className: 'dgs-empty' }, t('emptyDir')))
       : h('div', null, headRow, h('table', { className: 'dgs-table' }, h('tbody', null, rows)))
     const readmeEl = (path === '' && overview && overview.readmeHtml)
       ? h('div', { className: 'dgs-card', style: { marginTop: 12 } },
@@ -507,9 +702,26 @@ function FileTree({ repo, rev, t, overview, onOverview }) {
       : null
     return h('div', null, table, readmeEl)
   }
+
+  function renderEmptyRepoGuide() {
+    const remote = (cloneUrl || '').replace(/^git clone\s+/, '') || ('http://<服务器>:3400/' + repo.owner + '/' + repo.name + '.git')
+    const branch = (overview && overview.defaultBranch) || 'master'
+    const copyBtn = (text) => h('button', { className: 'dgs-btn ghost', style: { padding: '2px 10px', fontSize: 12 }, onClick: () => { try { navigator.clipboard.writeText(text) } catch {} } }, t('copy'))
+    return h('div', { className: 'dgs-card', style: { maxWidth: 660, margin: '24px auto' } },
+      h('div', { style: { fontWeight: 700, fontSize: 15, marginBottom: 6 } }, '这个仓库还是空的'),
+      h('div', { className: 'dgs-sub', style: { marginBottom: 12 } }, '克隆到本地开始开发，或把已有的本地仓库推送上来。git 凭据使用 dsh（user-management）的用户名和密码。'),
+      h('div', { className: 'dgs-row', style: { marginBottom: 4 } },
+        h('span', { style: { fontWeight: 600, fontSize: 12.5, flex: 1 } }, '克隆仓库'),
+        copyBtn('git clone ' + remote)),
+      h('div', { className: 'dgs-guide' }, 'git clone ' + remote),
+      h('div', { className: 'dgs-row', style: { margin: '12px 0 4px' } },
+        h('span', { style: { fontWeight: 600, fontSize: 12.5, flex: 1 } }, '推送已有仓库'),
+        copyBtn('git remote add origin ' + remote + '\ngit push -u origin ' + branch)),
+      h('div', { className: 'dgs-guide' }, 'git remote add origin ' + remote + '\ngit push -u origin ' + branch))
+  }
 }
 
-function IssuesArea({ repo, t, initialSub }) {
+function IssuesArea({ repo, t, initialSub, initialIdx }) {
   const [sub, setSub] = useState(initialSub || 'list')
   const [labelJump, setLabelJump] = useState(null)
   const [msJump, setMsJump] = useState(null)
@@ -525,12 +737,12 @@ function IssuesArea({ repo, t, initialSub }) {
       h('span', { style: { flex: 1 } }),
       sub === 'list' ? h('button', { className: 'dgs-btn', onClick: () => setCreateSignal((n) => n + 1) }, t('issueNew')) : null),
     sub === 'list' && h(Issues, { repo, t, presetLabel: labelJump, presetMilestone: msJump,
-      onPresetDone: () => { setLabelJump(null); setMsJump(null) }, createSignal }),
+      onPresetDone: () => { setLabelJump(null); setMsJump(null) }, createSignal, initialIdx }),
     sub === 'labels' && h(LabelsManage, { repo, t, onFilterLabel: (lid) => { setLabelJump(lid); setSub('list') } }),
     sub === 'milestones' && h(MilestonesManage, { repo, t, onOpenMilestone: (m) => { setMsJump(m.id); setSub('list') } }))
 }
 
-function Issues({ repo, t, presetLabel, presetMilestone, onPresetDone, createSignal }) {
+function Issues({ repo, t, presetLabel, presetMilestone, onPresetDone, createSignal, initialIdx }) {
   const [state, setState] = useState('open')
   const [flt, setFlt] = useState({ label: '', milestone: '', assignee: '' })
   useEffect(() => {
@@ -545,7 +757,7 @@ function Issues({ repo, t, presetLabel, presetMilestone, onPresetDone, createSig
   const [meta, setMeta] = useState({ labels: [], milestones: [], collabs: [] })
   const [creating, setCreating] = useState(false)
   useEffect(() => { if (createSignal) setCreating(true) }, [createSignal])
-  const [openIdx, setOpenIdx] = useState(null)
+  const [openIdx, setOpenIdx] = useState(initialIdx ?? null)
   const reload = useCallback(() => {
     setList(null)
     const q = new URLSearchParams({ state, sort })
@@ -690,6 +902,8 @@ function IssueDetail({ repo, idx, t, onBack }) {
     setComments(null)
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/issues/${idx}`).then((d) => setIssue(d && d.number ? d : null))
     api('GET', `/repos/${repo.owner}/${repo.name}/issues/${idx}/comments`).then((d) => setComments(d.comments || []))
+    // 打开详情即视为已读（通知中心据此消未读）
+    api('POST', `/dsh/repos/${repo.owner}/${repo.name}/issues/${idx}/read`).catch(() => {})
   }, [repo.owner, repo.name, idx])
   useEffect(reload, [reload])
   useEffect(() => {
@@ -719,7 +933,13 @@ function IssueDetail({ repo, idx, t, onBack }) {
     comments === null ? h('div', { className: 'dgs-empty' }, t('loading'))
       : comments.length === 0 ? h('div', { className: 'dgs-empty' }, t('noIssues'))
       : comments.map((c) =>
-          h('div', { key: c.id, className: 'dgs-comment' },
+          c.type === 2 // 提交关单事件（push 时 fixes #N 触发）
+            ? h('div', { key: c.id || ('ev' + c.created), className: 'dgs-row', style: { padding: '5px 4px', gap: 6 } },
+                h('span', null, '🔒'),
+                h('span', { className: 'dgs-sub' }, (c.user || '') + ' 通过提交 '),
+                h('code', { className: 'dgs-badge' }, (c.commit_sha || '').slice(0, 10) || '?'),
+                h('span', { className: 'dgs-sub' }, ' 关闭了此工单 · ' + fmtDate(c.created)))
+          : h('div', { key: c.id, className: 'dgs-comment' },
             h('div', { className: 'dgs-row', style: { marginBottom: 4 } },
               h('span', { className: 'dgs-sub' }, `${c.user || ''} · ${fmtDate(c.created)}`),
               h('span', { style: { flex: 1 } }),
@@ -736,7 +956,7 @@ function IssueDetail({ repo, idx, t, onBack }) {
                   await api('PATCH', `/repos/${repo.owner}/${repo.name}/issues/comments/${c.id}`, { body: editC.text })
                   setEditC(null); reload()
                 } }, t('save'))))
-              : h('div', { style: { whiteSpace: 'pre-wrap' } }, c.body))),
+              : h('div', { style: { whiteSpace: 'pre-wrap' } }, linkifyIssues(c.body, repo)))),
     h('div', { className: 'dgs-card', style: { margin: '12px 0' } },
       h('textarea', { className: 'dgs-input', placeholder: t('commentPlaceholder'), value: text, onChange: (e) => setText(e.target.value) }),
       h('div', { className: 'dgs-row', style: { marginTop: 8 } },
@@ -819,7 +1039,7 @@ function Commits({ repo, rev, t }) {
     h('table', { className: 'dgs-table' },
       h('tbody', null, shown.map((c, i) =>
         h('tr', { key: i, style: { cursor: 'pointer' }, onClick: () => setSel(c.sha) },
-          h('td', null, h('div', { style: { fontWeight: 500 } }, (c.message || '').split('\n')[0]),
+          h('td', null, h('div', { style: { fontWeight: 500 } }, linkifyIssues((c.message || '').split('\n')[0], repo)),
             h('div', { className: 'dgs-sub' }, c.author)),
           h('td', { className: 'dgs-sub', style: { textAlign: 'right', whiteSpace: 'nowrap' } }, (c.sha || '').slice(0, 10)),
           h('td', { className: 'dgs-sub', style: { textAlign: 'right', whiteSpace: 'nowrap', width: 100 } }, timeAgo(c.date)))))),
@@ -839,7 +1059,7 @@ function CommitDetail({ repo, sha, t, onBack }) {
   return h('div', null,
     h('div', { className: 'dgs-row', style: { marginBottom: 10 } },
       h('button', { className: 'dgs-btn ghost', onClick: onBack }, t('back')),
-      h('span', { style: { fontWeight: 600 } }, (d.message || '').split('\n')[0]),
+      h('span', { style: { fontWeight: 600 } }, linkifyIssues((d.message || '').split('\n')[0], repo)),
       h('span', { className: 'dgs-sub' }, (d.sha || '').slice(0, 10))),
     h('div', { className: 'dgs-sub', style: { marginBottom: 8 } },
       `${(d.author && d.author.name) || ''} · ${fmtDate(when)}`),
@@ -933,8 +1153,9 @@ function Branches({ repo, t, onNewPR }) {
                 b.name !== def ? h('button', { className: 'dgs-btn ghost', style: { marginLeft: 8, padding: '2px 8px' }, onClick: () => onNewPR && onNewPR(b.name, def) }, '+ PR') : null,
                 b.name !== def ? h('button', { className: 'dgs-btn danger', style: { marginLeft: 4, padding: '2px 8px' }, onClick: async () => {
                   if (!confirm('删除分支 ' + b.name + ' ？')) return
-                  await api('DELETE', `/repos/${repo.owner}/${repo.name}/branches/${encodeURIComponent(b.name)}`)
-                  reload()
+                  const d = await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/branches/${encodeURIComponent(b.name)}`)
+                  if (d && d.ok) reload()
+                  else alert((d && d.error) || '删除失败')
                 } }, '删') : null))))),
         h('div', { style: { fontWeight: 700, margin: '18px 0 8px' } }, '标签'),
         tags === null ? h('div', { className: 'dgs-empty' }, t('loading'))
@@ -1189,19 +1410,33 @@ function RepoSettings({ repo, t }) {
   const [form, setForm] = useState({ description: '', private: false, website: '' })
   const [collabs, setCollabs] = useState([])
   const [addName, setAddName] = useState('')
+  const [addMode, setAddMode] = useState('write')
   const [hooks, setHooks] = useState(null)
   const [hookUrl, setHookUrl] = useState('')
+  const [hookDeliveries, setHookDeliveries] = useState({}) // id → rows | 'loading'
+  const [prots, setProts] = useState(null)
+  const [protBranch, setProtBranch] = useState('')
+  const [branchList, setBranchList] = useState([])
+  const [mirrorInfo, setMirrorInfo] = useState(null)
+  const [syncBusy, setSyncBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const loadCollabs = () => api('GET', `/dsh/repos/${repo.owner}/${repo.name}/collaborators`).then((d) => setCollabs(Array.isArray(d) ? d : []))
   const loadHooks = () => api('GET', `/dsh/repos/${repo.owner}/${repo.name}/hooks`).then((d) => setHooks(Array.isArray(d) ? d : []))
+  const loadProts = () => api('GET', `/dsh/repos/${repo.owner}/${repo.name}/protections`).then((d) => setProts(Array.isArray(d) ? d : []))
   useEffect(() => {
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}`).then((d) => {
-      if (d && d.name) { setInfo(d); setForm({ description: d.description || '', private: !!d.private, website: d.website || '' }) }
+      if (d && d.name) {
+        setInfo(d)
+        setForm({ description: d.description || '', private: !!d.private, website: d.website || '' })
+        if (d.isMirror) setMirrorInfo(d.mirror || { address: '', updatedAt: 0, nextAt: 0 })
+      }
       else setMsg((d && d.error) || t('loadFailed'))
     })
     loadCollabs()
     loadHooks()
+    loadProts()
+    api('GET', `/repos/${repo.owner}/${repo.name}/branches`).then((d) => setBranchList((d && d.branches) || []))
   }, [repo.owner, repo.name])
   if (info === null && !msg) return h('div', { className: 'dgs-empty' }, t('loading'))
   const navItem = (k, label) => h('span', { key: k, className: 'item' + (sub === k ? ' active' : ''), onClick: () => setSub(k) }, label)
@@ -1226,19 +1461,33 @@ function RepoSettings({ repo, t }) {
           setBusy(false)
           d && d.ok ? setMsg('✓ 已保存') : setMsg((d && d.error) || 'failed')
         } }, '更新设置')))
+  const collabModeName = { 1: '只读', 2: '可写', 3: '管理' }
   const collab = h('div', { className: 'dgs-card' },
     h('div', { style: { fontWeight: 700, marginBottom: 8 } }, '协作者'),
     h('div', { className: 'dgs-row' },
       h('input', { className: 'dgs-input', style: { maxWidth: 200 }, placeholder: '用户名', value: addName, onChange: (e) => setAddName(e.target.value) }),
+      h('select', { className: 'dgs-input', style: { maxWidth: 110, flex: 'none', width: 'auto' }, value: addMode, onChange: (e) => setAddMode(e.target.value) },
+        h('option', { value: 'read' }, '只读'),
+        h('option', { value: 'write' }, '可写'),
+        h('option', { value: 'admin' }, '管理')),
       h('button', { className: 'dgs-btn', disabled: !addName.trim(),
         onClick: async () => {
-          const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/collaborators/${encodeURIComponent(addName.trim())}`)
+          const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/collaborators/${encodeURIComponent(addName.trim())}`, { mode: addMode })
           if (d && d.ok !== false && !d.error) { setAddName(''); setMsg(''); loadCollabs() } else setMsg((d && d.error) || 'failed')
         } }, '+ 添加')),
     collabs.length === 0 ? h('div', { className: 'dgs-sub', style: { marginTop: 8 } }, '—') : null,
     collabs.map((u) => h('div', { key: u.name, className: 'dgs-row', style: { marginTop: 6 } },
       h('a', { className: 'dgs-name', href: '#/u/' + u.name }, u.name),
       h('span', { style: { flex: 1 } }),
+      h('select', { className: 'dgs-input', style: { maxWidth: 96, flex: 'none', width: 'auto', padding: '3px 6px', fontSize: 12 }, value: String(u.mode || 2),
+        onChange: async (e) => {
+          const mode = { 1: 'read', 2: 'write', 3: 'admin' }[e.target.value] || 'write'
+          await api('PATCH', `/dsh/repos/${repo.owner}/${repo.name}/collaborators/${encodeURIComponent(u.name)}`, { mode })
+          loadCollabs()
+        } },
+        h('option', { value: '1' }, '只读'),
+        h('option', { value: '2' }, '可写'),
+        h('option', { value: '3' }, '管理')),
       h('button', { className: 'dgs-btn danger', onClick: async () => {
         await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/collaborators/${encodeURIComponent(u.name)}`)
         loadCollabs()
@@ -1251,16 +1500,77 @@ function RepoSettings({ repo, t }) {
         const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/hooks`, { url: hookUrl.trim() })
         if (d && !d.error) { setHookUrl(''); loadHooks() } else setMsg((d && d.error) || 'failed')
       } }, '+ 添加')),
-    (hooks || []).map((hk) => h('div', { key: hk.id, className: 'dgs-row', style: { marginTop: 6 } },
-      h('span', { className: 'dgs-badge' + (hk.is_active ? ' ok' : ' closed') }, hk.is_active ? '启用' : '停用'),
-      h('span', { className: 'dgs-sub', style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' } }, hk.url),
-      h('button', { className: 'dgs-btn ghost', onClick: async () => {
-        await api('PATCH', `/dsh/repos/${repo.owner}/${repo.name}/hooks/${hk.id}`, { active: !hk.is_active }); loadHooks()
-      } }, hk.is_active ? '停用' : '启用'),
-      h('button', { className: 'dgs-btn danger', onClick: async () => {
-        await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/hooks/${hk.id}`); loadHooks()
-      } }, t('delete')))),
+    (hooks || []).map((hk) => h('div', { key: hk.id, style: { marginTop: 6 } },
+      h('div', { className: 'dgs-row' },
+        h('span', { className: 'dgs-badge' + (hk.is_active ? ' ok' : ' closed') }, hk.is_active ? '启用' : '停用'),
+        hk.last_status === 1 ? h('span', { className: 'dgs-badge ok', title: '最近一次投递成功' }, '✓ 投递成功')
+          : hk.last_status === 2 ? h('span', { className: 'dgs-badge closed', title: '最近一次投递失败' }, '✗ 投递失败') : null,
+        h('span', { className: 'dgs-sub', style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' } }, hk.url),
+        h('button', { className: 'dgs-btn ghost', onClick: async () => {
+          const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/hooks/${hk.id}/test`)
+          if (d && d.ok) { setMsg('✓ 已发送测试事件（push）'); setTimeout(() => setMsg(''), 1600); setTimeout(loadHooks, 1200) }
+          else setMsg((d && d.error) || 'failed')
+        } }, '测试'),
+        h('button', { className: 'dgs-btn ghost', onClick: async () => {
+          if (hookDeliveries[hk.id]) { setHookDeliveries({ ...hookDeliveries, [hk.id]: undefined }); return }
+          setHookDeliveries({ ...hookDeliveries, [hk.id]: 'loading' })
+          const d = await api('GET', `/dsh/repos/${repo.owner}/${repo.name}/hooks/${hk.id}/deliveries`)
+          setHookDeliveries((m) => ({ ...m, [hk.id]: Array.isArray(d) ? d : [] }))
+        } }, '记录'),
+        h('button', { className: 'dgs-btn ghost', onClick: async () => {
+          await api('PATCH', `/dsh/repos/${repo.owner}/${repo.name}/hooks/${hk.id}`, { active: !hk.is_active }); loadHooks()
+        } }, hk.is_active ? '停用' : '启用'),
+        h('button', { className: 'dgs-btn danger', onClick: async () => {
+          await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/hooks/${hk.id}`); loadHooks()
+        } }, t('delete'))),
+      Array.isArray(hookDeliveries[hk.id]) ? h('div', { style: { margin: '4px 0 4px 24px' } },
+        hookDeliveries[hk.id].length === 0 ? h('div', { className: 'dgs-sub' }, '暂无投递记录')
+          : hookDeliveries[hk.id].map((dv) =>
+              h('div', { key: dv.id, className: 'dgs-row', style: { padding: '2px 0', gap: 8 } },
+                h('span', { className: 'dgs-badge' + (dv.ok ? ' ok' : ' closed') }, dv.ok ? '成功' : '失败'),
+                h('span', { className: 'dgs-sub' }, '#' + dv.id + ' · ' + dv.event + (dv.status ? ' · HTTP ' + dv.status : '')),
+                dv.err ? h('span', { className: 'dgs-sub', style: { color: 'var(--dsw-alias-state-error-primary)' } }, dv.err) : null)))
+        : hookDeliveries[hk.id] === 'loading' ? h('div', { className: 'dgs-sub', style: { margin: '4px 0 4px 24px' } }, t('loading')) : null)),
     hooks !== null && hooks.length === 0 ? h('div', { className: 'dgs-sub', style: { marginTop: 6 } }, '—') : null)
+  const protsCard = h('div', { className: 'dgs-card' },
+    h('div', { style: { fontWeight: 700, marginBottom: 8 } }, '分支保护'),
+    h('div', { className: 'dgs-sub', style: { marginBottom: 10 } }, '受保护的分支不可删除，也不接受强推（非快进推送会被拒绝）。合并 PR、网页编辑等正常快进操作不受影响。'),
+    h('div', { className: 'dgs-row' },
+      h('select', { className: 'dgs-input', style: { maxWidth: 220, flex: 'none', width: 'auto' }, value: protBranch, onChange: (e) => setProtBranch(e.target.value) },
+        h('option', { value: '' }, '选择分支…'),
+        branchList.map((b) => h('option', { key: b.name, value: b.name }, b.name + (info && b.name === info.defaultBranch ? '（默认）' : '')))),
+      h('button', { className: 'dgs-btn', disabled: !protBranch, onClick: async () => {
+        const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/protections`, { branch: protBranch, protected: true })
+        if (d && d.ok) { setProtBranch(''); loadProts() } else setMsg((d && d.error) || 'failed')
+      } }, '+ 保护')),
+    prots === null ? h('div', { className: 'dgs-sub', style: { marginTop: 8 } }, t('loading'))
+      : prots.length === 0 ? h('div', { className: 'dgs-sub', style: { marginTop: 8 } }, '—')
+      : prots.map((p) => h('div', { key: p.branch, className: 'dgs-row', style: { marginTop: 6 } },
+          h('span', { className: 'dgs-badge ok' }, '🔒 ' + p.branch),
+          h('span', { style: { flex: 1 } }),
+          h('button', { className: 'dgs-btn danger', onClick: async () => {
+            await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/protections`, { branch: p.branch, protected: false })
+            loadProts()
+          } }, '解除保护'))))
+  const mirrorCard = mirrorInfo ? h('div', { className: 'dgs-card' },
+    h('div', { style: { fontWeight: 700, marginBottom: 8 } }, '镜像同步'),
+    h('div', { className: 'dgs-row' },
+      h('span', { className: 'dgs-sub', style: { minWidth: 70 } }, '上游地址'),
+      h('span', { style: { fontFamily: 'ui-monospace,monospace', fontSize: 12.5, wordBreak: 'break-all' } }, mirrorInfo.address || '—')),
+    h('div', { className: 'dgs-row' },
+      h('span', { className: 'dgs-sub', style: { minWidth: 70 } }, '上次同步'),
+      h('span', { className: 'dgs-sub' }, mirrorInfo.updatedAt ? timeAgo(mirrorInfo.updatedAt) : '从未'),
+      h('span', { className: 'dgs-sub' }, mirrorInfo.nextAt ? '· 下次 ' + timeAgo(mirrorInfo.nextAt).replace('之前', '后') : '')),
+    h('div', { className: 'dgs-row', style: { marginTop: 8 } },
+      h('button', { className: 'dgs-btn', disabled: syncBusy, onClick: async () => {
+        setSyncBusy(true); setMsg('')
+        const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/mirror-sync`)
+        setSyncBusy(false)
+        if (d && d.ok) {
+          setMirrorInfo({ ...mirrorInfo, updatedAt: d.updatedAt, nextAt: d.nextAt })
+          setMsg('✓ 同步完成')
+        } else setMsg((d && d.error) || '同步失败')
+      } }, syncBusy ? '同步中…（拉取上游可能需要数十秒）' : '立即同步'))) : null
   const danger = h('div', { className: 'dgs-card', style: { marginTop: 12, borderColor: 'var(--dsw-alias-state-error-primary)55' } },
     h('div', { style: { fontWeight: 700, marginBottom: 8, color: 'var(--dsw-alias-state-error-primary)' } }, '危险区域'),
     h('div', { className: 'dgs-row' },
@@ -1292,17 +1602,19 @@ function RepoSettings({ repo, t }) {
       h('div', { className: 'dgs-settings-nav' },
         navItem('basic', '基本设置'),
         navItem('collab', '管理协作者'),
+        navItem('prot', '分支保护'),
         navItem('hooks', '管理 Web 钩子'),
+        mirrorInfo ? navItem('mirror', '镜像同步') : null,
         navItem('danger', '危险区域')),
       h('div', { style: { flex: 1, minWidth: 0 } },
-        sub === 'basic' ? basic : sub === 'collab' ? collab : sub === 'hooks' ? hooksCard : danger)))
+        sub === 'basic' ? basic : sub === 'collab' ? collab : sub === 'prot' ? protsCard : sub === 'hooks' ? hooksCard : sub === 'mirror' ? mirrorCard : danger)))
 }
 
 // ── PR（列表 + 详情 + 合并 + 评论复用 issue 通道） ────────────────────────
 
-function Pulls({ repo, t, preset, onPresetDone, onGoIssuesSub }) {
+function Pulls({ repo, t, preset, onPresetDone, onGoIssuesSub, initialIdx }) {
   const [list, setList] = useState(null)
-  const [openIdx, setOpenIdx] = useState(null)
+  const [openIdx, setOpenIdx] = useState(initialIdx ?? null)
   const [creating, setCreating] = useState(false)
   const [state, setState] = useState('open')
   const [flt, setFlt] = useState({ label: '', milestone: '', assignee: '' })
@@ -1473,6 +1785,11 @@ function PullDetail({ repo, idx, t, onBack }) {
   const [allMs, setAllMs] = useState([])
   const [collabs, setCollabs] = useState([])
   const [mergeMsg, setMergeMsg] = useState('')
+  const [reviews, setReviews] = useState([])
+  const [reviewText, setReviewText] = useState('')
+  const loadReviews = useCallback(() => {
+    api('GET', `/dsh/repos/${repo.owner}/${repo.name}/pulls/${idx}/reviews`).then((d) => setReviews(Array.isArray(d) ? d : []))
+  }, [repo.owner, repo.name, idx])
   useEffect(() => {
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/pulls`).then((d) => {
       const all = Array.isArray(d) ? d : (d.data || d.pulls || [])
@@ -1482,6 +1799,8 @@ function PullDetail({ repo, idx, t, onBack }) {
     })
     api('GET', `/repos/${repo.owner}/${repo.name}/issues/${idx}/comments`).then((d) => setComments(d.comments || []))
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/issues/${idx}`).then((d) => setIssue(d && d.number ? d : null))
+    api('POST', `/dsh/repos/${repo.owner}/${repo.name}/issues/${idx}/read`).catch(() => {})
+    loadReviews()
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/labels`).then((d) => setAllLabels(Array.isArray(d) ? d : []))
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/milestones`).then((d) => setAllMs(Array.isArray(d) ? d : []))
     api('GET', `/dsh/repos/${repo.owner}/${repo.name}/collaborators`).then((d) => setCollabs(Array.isArray(d) ? d : []))
@@ -1523,12 +1842,36 @@ function PullDetail({ repo, idx, t, onBack }) {
             h('option', { value: '' }, '未指派成员'),
             collabs.map((u) => h('option', { key: u.name, value: u.name }, u.name)))),
     h('div', { className: 'dgs-side-block' },
+      h('div', { className: 'dgs-side-title' }, '评审'),
+      reviews.length === 0 ? h('div', { className: 'dgs-sub' }, '暂无评审') : null,
+      reviews.map((rv) => h('div', { key: rv.user, className: 'dgs-row', style: { padding: '3px 0', gap: 6 } },
+        h('span', { style: { color: rv.approved ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-error-primary)', fontWeight: 600, fontSize: 12.5 } }, rv.approved ? '✓' : '✗'),
+        h('span', { style: { fontSize: 12.5 } }, rv.user),
+        h('span', { className: 'dgs-sub' }, rv.approved ? '通过' : '请求修改')))),
+    h('div', { className: 'dgs-side-block' },
       h('div', { className: 'dgs-side-title' }, (issue && issue.participants || 1) + ' 名参与者'),
       h('div', { className: 'dgs-sub' }, pr.author || '')))
+  const approvals = reviews.filter((rv) => rv.approved).length
+  const submitReview = async (approved) => {
+    setBusy(true)
+    const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/pulls/${idx}/reviews`, { approved, content: reviewText.trim() })
+    setBusy(false)
+    if (d && d.ok) {
+      setReviewText('')
+      loadReviews()
+      if (reviewText.trim()) api('GET', `/repos/${repo.owner}/${repo.name}/issues/${idx}/comments`).then((d2) => setComments(d2.comments || []))
+    } else setMsg((d && d.error) || 'failed')
+  }
   const mergeBox = pr.state === 'open' ? h('div', { className: 'dgs-card', style: { margin: '10px 0', borderColor: 'var(--dsw-alias-state-success-primary)55' } },
     h('div', { className: 'dgs-row', style: { gap: 8 } },
       h('span', { style: { color: 'var(--dsw-alias-state-success-primary)', fontSize: 16 } }, '⑂'),
-      h('span', { style: { color: 'var(--dsw-alias-state-success-primary)', fontSize: 13 } }, '该合并请求可以进行自动合并操作。')),
+      h('span', { style: { color: 'var(--dsw-alias-state-success-primary)', fontSize: 13 } }, '该合并请求可以进行自动合并操作。'),
+      approvals > 0 ? h('span', { className: 'dgs-badge ok' }, approvals + ' 个评审通过') : null),
+    h('div', { style: { margin: '10px 0', borderTop: '1px solid var(--dsw-alias-border-l2)', paddingTop: 10 } },
+      h('textarea', { className: 'dgs-input', style: { minHeight: 48 }, placeholder: '评审意见（可选，会同时出现在对话中）', value: reviewText, onChange: (e) => setReviewText(e.target.value) }),
+      h('div', { className: 'dgs-row', style: { marginTop: 6 } },
+        h('button', { className: 'dgs-btn ghost', disabled: busy, onClick: () => submitReview(true) }, '✓ 通过评审'),
+        h('button', { className: 'dgs-btn ghost', disabled: busy, onClick: () => submitReview(false) }, '✗ 请求修改'))),
     h('div', { style: { margin: '10px 0' } },
       h('label', { className: 'dgs-sub', style: { display: 'flex', gap: 6, alignItems: 'center', margin: '4px 0' } },
         h('input', { type: 'radio', name: 'mergeStyle', checked: mergeStyle === 'merge', onChange: () => setMergeStyle('merge') }), '创建一个新的合并提交'),
@@ -1560,7 +1903,7 @@ function PullDetail({ repo, idx, t, onBack }) {
     (comments || []).map((c) =>
       h('div', { key: c.id, className: 'dgs-comment' },
         h('div', { className: 'dgs-sub', style: { marginBottom: 4 } }, `${c.user || ''} 评论于 ${fmtDate(c.created)}`),
-        h('div', { style: { whiteSpace: 'pre-wrap' } }, c.body || '这个人很懒，什么都没留下。'))),
+        h('div', { style: { whiteSpace: 'pre-wrap' } }, c.body ? linkifyIssues(c.body, repo) : '这个人很懒，什么都没留下。'))),
     h('div', { className: 'dgs-card', style: { margin: '10px 0' } },
       h('textarea', { className: 'dgs-input', placeholder: t('commentPlaceholder'), value: text, onChange: (e) => setText(e.target.value) }),
       h('div', { className: 'dgs-row', style: { marginTop: 8 } },
@@ -1578,7 +1921,7 @@ function PullDetail({ repo, idx, t, onBack }) {
     : h('table', { className: 'dgs-table' },
         h('tbody', null, cmp.commits.map((c) =>
           h('tr', { key: c.sha, style: { cursor: 'pointer' }, onClick: () => setSelCommit(c.sha) },
-            h('td', null, h('div', { style: { fontWeight: 500 } }, (c.message || '').split('\n')[0]),
+            h('td', null, h('div', { style: { fontWeight: 500 } }, linkifyIssues((c.message || '').split('\n')[0], repo)),
               h('div', { className: 'dgs-sub' }, c.author)),
             h('td', { className: 'dgs-sub', style: { textAlign: 'right' } },
               h('a', { style: { color: 'var(--dsw-alias-state-business-primary)', cursor: 'pointer' } }, (c.sha || '').slice(0, 10)))))))
@@ -1799,16 +2142,46 @@ function Releases({ repo, t }) {
                 r.prerelease ? h('span', { className: 'dgs-badge pri' }, '预发布') : null,
                 h('span', { style: { fontWeight: 600 } }, r.title),
                 h('span', { style: { flex: 1 } }),
-                h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => { setEditId(r.id); setEditForm({ title: r.title || '', note: r.noteRaw || '' }) } }, '(编辑)')),
+                h('a', { className: 'dgs-sub', style: { cursor: 'pointer' }, onClick: () => { setEditId(r.id); setEditForm({ title: r.title || '', note: r.noteRaw || '' }) } }, '(编辑)'),
+                h('a', { className: 'dgs-sub', style: { cursor: 'pointer', color: 'var(--dsw-alias-state-error-primary)' }, onClick: async () => {
+                  if (!confirm('删除发版 ' + r.tag + '（git 标签保留）？')) return
+                  const d = await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/releases/${r.id}`)
+                  if (d && d.ok) reload(); else setMsg((d && d.error) || '删除失败')
+                } }, '(删除)')),
               h('div', { className: 'dgs-sub', style: { marginTop: 4 } },
                 (r.author || '') + ' · ' + timeAgo((r.createdAt || 0) * 1000) + ' 发布 · ' +
                 (r.behind ? '在该版本发布之后已有 ' + r.behind + ' 次代码提交到 ' + (r.target || '默认') + ' 分支' : '暂无后续提交')),
               r.noteHtml ? h('div', { className: 'dgs-md', style: { marginTop: 8 }, dangerouslySetInnerHTML: { __html: r.noteHtml } }) : null,
               h('div', { style: { marginTop: 10 } },
-                h('div', { style: { fontWeight: 600, fontSize: 13, marginBottom: 4 } }, '下载附件'),
+                h('div', { className: 'dgs-row', style: { marginBottom: 4 } },
+                  h('div', { style: { fontWeight: 600, fontSize: 13 } }, '下载附件'),
+                  h('span', { style: { flex: 1 } }),
+                  h('label', { className: 'dgs-sub', style: { cursor: 'pointer' } }, '⭱ 上传附件',
+                    h('input', { type: 'file', style: { display: 'none' }, onChange: async (e) => {
+                      const f = e.target.files && e.target.files[0]
+                      e.target.value = ''
+                      if (!f) return
+                      if (f.size > 25 * 1024 * 1024) { setMsg('附件超过 25MB 上限'); return }
+                      const bytes = new Uint8Array(await f.arrayBuffer())
+                      let bin = ''
+                      for (let i = 0; i < bytes.length; i += 32768) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768))
+                      setMsg('')
+                      const d = await api('POST', `/dsh/repos/${repo.owner}/${repo.name}/releases/${r.id}/assets`, { name: f.name, contentBase64: btoa(bin) })
+                      if (d && d.ok) reload(); else setMsg((d && d.error) || '上传失败')
+                    } }))),
                 h('div', { className: 'dgs-row', style: { gap: 8 } },
                   h('a', { className: 'dgs-sub', href: `/dsh-git-server/api/dsh/repos/${repo.owner}/${repo.name}/archive/${encodeURIComponent(r.tag)}.zip`, download: `${repo.name}-${r.tag}.zip` }, '源代码 (ZIP)'),
-                  h('a', { className: 'dgs-sub', href: `/dsh-git-server/api/dsh/repos/${repo.owner}/${repo.name}/archive/${encodeURIComponent(r.tag)}.tar.gz`, download: `${repo.name}-${r.tag}.tar.gz` }, '源代码 (TAR.GZ)')))))),
+                  h('a', { className: 'dgs-sub', href: `/dsh-git-server/api/dsh/repos/${repo.owner}/${repo.name}/archive/${encodeURIComponent(r.tag)}.tar.gz`, download: `${repo.name}-${r.tag}.tar.gz` }, '源代码 (TAR.GZ)')),
+                (r.assets || []).length === 0 ? null
+                  : h('div', { style: { marginTop: 6 } }, r.assets.map((a) =>
+                      h('div', { key: a.id, className: 'dgs-row', style: { gap: 8, padding: '2px 0' } },
+                        h('a', { className: 'dgs-sub', style: { color: 'var(--dsw-alias-state-business-primary)' }, href: `/dsh-git-server/api/dsh/repos/${repo.owner}/${repo.name}/attachments/${a.id}`, download: a.name }, '📦 ' + a.name),
+                        h('span', { className: 'dgs-sub' }, fmtSize(a.size)),
+                        h('a', { className: 'dgs-sub', style: { cursor: 'pointer', color: 'var(--dsw-alias-state-error-primary)' }, onClick: async () => {
+                          if (!confirm('删除附件 ' + a.name + ' ？')) return
+                          await api('DELETE', `/dsh/repos/${repo.owner}/${repo.name}/attachments/${a.id}`)
+                          reload()
+                        } }, '删除')))))))),
     (plainTags && plainTags.length > 0) ? h('div', { style: { marginTop: 16 } },
       h('div', { style: { fontWeight: 700, margin: '4px 0 8px' } }, '未发版的标签'),
       plainTags.map((tg) => h('div', { key: tg, className: 'dgs-issue' },
@@ -1940,20 +2313,44 @@ function OrgView({ name, t }) {
 
 function UserProfile({ name, t }) {
   const [profile, setProfile] = useState(null)
-  useEffect(() => {
+  const [showList, setShowList] = useState(null) // 'followers' | 'following' | null
+  const [followBusy, setFollowBusy] = useState(false)
+  const reload = useCallback(() => {
     api('GET', '/dsh/users/' + encodeURIComponent(name)).then((d) => setProfile(d.data || d))
   }, [name])
+  useEffect(() => { reload() }, [reload])
   if (profile === null) return h('div', { className: 'dgs-empty' }, t('loading'))
+  const followBtn = profile.isSelf === false ? h('button', {
+    className: 'dgs-btn' + (profile.isFollowing ? ' ghost' : ''), style: { marginTop: 10, width: '100%' }, disabled: followBusy,
+    onClick: async () => {
+      setFollowBusy(true)
+      const d = await api('POST', '/dsh/users/' + encodeURIComponent(name) + '/follow')
+      setFollowBusy(false)
+      if (d && typeof d.on === 'boolean') reload()
+    },
+  }, profile.isFollowing ? '取消关注' : '+ 关注') : null
+  const countBtn = (k, n, label) => h('a', {
+    className: 'dgs-sub', style: { cursor: 'pointer', color: showList === k ? 'var(--dsw-alias-state-business-primary)' : undefined },
+    onClick: () => setShowList(showList === k ? null : k),
+  }, `${n} ${label}`)
+  const listNames = showList === 'followers' ? profile.followers : showList === 'following' ? profile.following : []
   return h('div', { className: 'dgs-settings-layout' },
     h('div', { className: 'dgs-settings-nav', style: { width: 230 } },
       h('div', { style: { width: 64, height: 64, borderRadius: 10, background: 'var(--dsw-alias-bg-layer-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 700, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10 } },
         (name || '?').slice(0, 1).toUpperCase()),
       h('div', { className: 'dgs-h1', style: { fontSize: 17 } }, name),
       profile.isAdmin ? h('span', { className: 'dgs-badge ok', style: { marginTop: 4 } }, 'admin') : null,
+      followBtn,
       h('div', { className: 'dgs-sub', style: { marginTop: 10 } }, profile.email ? '✉ ' + profile.email : ''),
       h('div', { className: 'dgs-sub', style: { marginTop: 4 } }, '🕐 加入于 ' + (profile.created ? new Date(profile.created * 1000).toLocaleDateString() : '')),
       h('div', { className: 'dgs-sub', style: { marginTop: 10 } },
-        `${profile.followers.length} 关注者 - ${profile.following.length} 关注中`)),
+        countBtn('followers', profile.followers.length, '关注者'),
+        ' - ',
+        countBtn('following', profile.following.length, '关注中')),
+      showList ? h('div', { style: { marginTop: 8, borderTop: '1px solid var(--dsw-alias-border-l2)', paddingTop: 8 } },
+        listNames.length === 0 ? h('div', { className: 'dgs-sub' }, '—')
+          : listNames.map((u) => h('div', { key: u, style: { padding: '3px 0' } },
+              h('a', { className: 'dgs-sub', style: { color: 'var(--dsw-alias-state-business-primary)', cursor: 'pointer' }, onClick: () => { setProfile(null); setShowList(null); nav('/u/' + u) } }, '@' + u)))) : null),
     h('div', { style: { flex: 1, minWidth: 0 } },
       h('div', { style: { fontWeight: 700, margin: '4px 0 10px' } }, '仓库'),
       profile.repos.length === 0 ? h('div', { className: 'dgs-empty' }, '—') : null,
@@ -2053,6 +2450,69 @@ function Admin({ t }) {
       sub === 'panel' ? panel : sub === 'users' ? usersTab : sub === 'repos' ? reposTab : orgsTab))
 }
 
+// ── 通知中心 ───────────────────────────────────────────────────────────────
+
+function Notifications({ t }) {
+  const [data, setData] = useState(null)
+  const reload = useCallback(() => {
+    api('GET', '/dsh/notifications').then((d) => setData(d && Array.isArray(d.items) ? d : { items: [], unread: 0 }))
+  }, [])
+  useEffect(() => { reload() }, [reload])
+  const reasonLabel = { mentioned: '@ 提及了你', assigned: '指派给你', poster: '你发起的', comment: '有新评论' }
+  const open = (n) => {
+    api('POST', `/dsh/repos/${n.repoOwner}/${n.repoName}/issues/${n.index}/read`).catch(() => {})
+    nav('/r/' + n.repoOwner + '/' + n.repoName + '/' + (n.isPull ? 'pulls' : 'issues') + '/' + n.index)
+  }
+  return h('div', null,
+    h('div', { className: 'dgs-row', style: { margin: '8px 0 12px' } },
+      h('span', { style: { fontWeight: 700 } }, '未读通知' + (data && data.unread ? '（' + data.unread + '）' : '')),
+      h('span', { style: { flex: 1 } }),
+      h('button', { className: 'dgs-btn ghost', disabled: !data || !data.unread, onClick: async () => { await api('POST', '/dsh/notifications/read-all'); reload() } }, '全部标记已读')),
+    data === null ? h('div', { className: 'dgs-empty' }, t('loading'))
+      : data.items.length === 0 ? h('div', { className: 'dgs-empty' }, '没有未读通知 🎉')
+      : data.items.map((n) =>
+          h('div', { key: n.repoOwner + '/' + n.repoName + '#' + n.index, className: 'dgs-issue', style: { cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }, onClick: () => open(n) },
+            h('span', { className: 'dgs-issue-num' + (n.isClosed ? ' closed' : '') }, '#' + n.index),
+            h('div', { style: { flex: 1, minWidth: 0 } },
+              h('div', null, h('span', { className: 'dgs-issue-title' }, n.title), n.isPull ? h('span', { className: 'dgs-badge', style: { marginLeft: 6 } }, 'PR') : null),
+              h('div', { className: 'dgs-sub', style: { marginTop: 2 } }, n.repoOwner + '/' + n.repoName + ' · ' + (reasonLabel[n.reason] || '有更新') + ' · ' + timeAgo(n.updatedAt))),
+            h('span', { className: 'dgs-sub', style: { flex: 'none' } }, '›'))))
+}
+
+// ── 我的工单 / 我的 PR（跨仓库聚合） ────────────────────────────────────────
+
+function MyIssues({ t, isPull }) {
+  const [filter, setFilter] = useState('all')
+  const [state, setState] = useState('open')
+  const [list, setList] = useState(null)
+  useEffect(() => {
+    setList(null)
+    api('GET', `/dsh/my/issues?type=${isPull ? 'pulls' : 'issues'}&state=${state}&filter=${filter}`)
+      .then((d) => setList(Array.isArray(d) ? d : []))
+  }, [isPull, state, filter])
+  const fBtn = (k, label) => h('button', { key: k, className: 'dgs-subtab' + (filter === k ? ' active' : ''), onClick: () => setFilter(k) }, label)
+  return h('div', null,
+    h('div', { className: 'dgs-row', style: { margin: '8px 0 12px' } },
+      h('button', { className: 'dgs-pill' + (state === 'open' ? ' active' : ''), onClick: () => setState('open') }, '⊘ ' + t('openState')),
+      h('button', { className: 'dgs-pill closed' + (state === 'closed' ? ' active' : ''), onClick: () => setState('closed') }, '✓ ' + t('closedState')),
+      h('span', { style: { flex: 1 } }),
+      h('div', { className: 'dgs-subtabs', style: { margin: 0 } },
+        fBtn('all', '与我相关'), fBtn('created', '我创建的'), fBtn('assigned', '指派给我的'))),
+    list === null ? h('div', { className: 'dgs-empty' }, t('loading'))
+      : list.length === 0 ? h('div', { className: 'dgs-empty' }, '—')
+      : list.map((i) =>
+          h('div', {
+            key: i.repoOwner + '/' + i.repoName + '#' + i.index, className: 'dgs-issue', style: { cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 },
+            onClick: () => nav('/r/' + i.repoOwner + '/' + i.repoName + '/' + (isPull ? 'pulls' : 'issues') + '/' + i.index),
+          },
+            h('span', { className: 'dgs-issue-num' + (i.state === 'open' ? '' : ' closed') }, '#' + i.index),
+            h('div', { style: { flex: 1, minWidth: 0 } },
+              h('div', { className: 'dgs-issue-title' }, i.title),
+              h('div', { className: 'dgs-sub', style: { marginTop: 2 } },
+                i.repoOwner + '/' + i.repoName + ' · ' + (i.author || '') + ' · ' + timeAgo(i.updatedAt) + (i.assignee ? ' · @' + i.assignee : ''))),
+            h('span', { className: 'dgs-sub', style: { flex: 'none' } }, '💬 ' + (i.comments || 0)))))
+}
+
 // ── 主页（仓库列表 + 建仓） ────────────────────────────────────────────────
 
 function GitPage({ onClose, t, standalone }) {
@@ -2062,6 +2522,8 @@ function GitPage({ onClose, t, standalone }) {
   const [err, setErr] = useState('')
   const [name, setName] = useState('')
   const [isPrivate, setIsPrivate] = useState(false)
+  const [createMode, setCreateMode] = useState('new') // new | import
+  const [importForm, setImportForm] = useState({ url: '', mirror: false })
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState('')
   const reload = useCallback(() => {
@@ -2102,28 +2564,70 @@ function GitPage({ onClose, t, standalone }) {
     return () => document.removeEventListener('click', onClickRow, true)
   }, [standalone, onClose])
   const notify = (m) => { setToast(m); setTimeout(() => setToast(''), 1600) }
+  const [unread, setUnread] = useState(0)
+  useEffect(() => {
+    api('GET', '/dsh/notifications/count').then((d) => { if (d && typeof d.unread === 'number') setUnread(d.unread) }).catch(() => {})
+  }, [route])
   const seg = route.split('/').filter(Boolean)
   const view = seg[0] || 'repos'
-  const repoRoute = view === 'r' && seg[1] && seg[2] ? { owner: seg[1], name: seg[2] } : null
+  const deepTab = seg[3] ? decodeURIComponent(seg[3]) : ''
+  // 深链：#/r/:o/:r 之外支持 /issues/:idx /pulls/:idx /src/:ref/:path...
+  const repoRoute = view === 'r' && seg[1] && seg[2] ? {
+    owner: seg[1], name: seg[2],
+    deep: {
+      tab: deepTab,
+      ref: deepTab === 'src' ? decodeURIComponent(seg[4] || '') : '',
+      arg: deepTab && deepTab !== 'src' ? decodeURIComponent(seg[4] || '') : '',
+      filePath: deepTab === 'src' && seg.length > 5 ? seg.slice(5).map((s) => decodeURIComponent(s)).join('/') : '',
+    },
+  } : null
   const body = err ? h('div', { className: 'dgs-card dgs-err' }, err,
       h('button', { className: 'dgs-btn ghost', style: { marginLeft: 12 }, onClick: reload }, t('retry')))
-    : repoRoute ? h(RepoBrowser, { repo: repoRoute, t, onBack: () => nav('/repos') })
+    : repoRoute ? h(RepoBrowser, { key: route, repo: repoRoute, t, deep: repoRoute.deep, onBack: () => nav('/repos') })
     : view === 'explore' ? h(Explore, { t })
     : view === 'orgs' ? h(Orgs, { t })
     : view === 'org' && seg[1] ? h(OrgView, { name: seg[1], t })
     : view === 'u' && seg[1] ? h(UserProfile, { name: decodeURIComponent(seg[1]), t })
     : view === 'admin' ? h(Admin, { t })
+    : view === 'notifications' ? h(Notifications, { t })
+    : view === 'myissues' ? h(MyIssues, { t, isPull: false })
+    : view === 'mypulls' ? h(MyIssues, { t, isPull: true })
     : me === null ? h('div', { className: 'dgs-empty' }, t('loading'))
     : h('div', null,
         h('div', { className: 'dgs-card' },
           h('div', { className: 'dgs-row' },
             h('span', { style: { fontWeight: 700 } }, t('newRepo')),
+            h('div', { className: 'dgs-subtabs', style: { margin: 0 } },
+              h('button', { className: 'dgs-subtab' + (createMode === 'new' ? ' active' : ''), onClick: () => setCreateMode('new') }, '新建'),
+              h('button', { className: 'dgs-subtab' + (createMode === 'import' ? ' active' : ''), onClick: () => setCreateMode('import') }, '导入'))),
+          createMode === 'new' ? h('div', { className: 'dgs-row', style: { marginTop: 8 } },
             h('input', { className: 'dgs-input', placeholder: t('repoName'), value: name,
               onChange: (e) => setName(e.target.value),
               onKeyDown: (e) => { if (e.key === 'Enter' && name.trim()) create() } }),
             h('label', { className: 'dgs-sub', style: { display: 'flex', gap: 4, alignItems: 'center' } },
               h('input', { type: 'checkbox', checked: isPrivate, onChange: (e) => setIsPrivate(e.target.checked) }), t('private')),
-            h('button', { className: 'dgs-btn', disabled: busy || !name.trim(), onClick: create }, t('create')))),
+            h('button', { className: 'dgs-btn', disabled: busy || !name.trim(), onClick: create }, t('create')))
+          : h('div', null,
+              h('div', { className: 'dgs-row', style: { marginTop: 8 } },
+                h('input', {
+                  className: 'dgs-input', placeholder: 'https://github.com/owner/repo.git', value: importForm.url,
+                  onChange: (e) => {
+                    const url = e.target.value
+                    setImportForm({ ...importForm, url })
+                    if (!name) {
+                      const m = /\/([^/]+?)(?:\.git)?\/?$/.exec(url.trim())
+                      if (m) setName(m[1])
+                    }
+                  },
+                })),
+              h('div', { className: 'dgs-row', style: { marginTop: 8 } },
+                h('input', { className: 'dgs-input', placeholder: t('repoName'), value: name, onChange: (e) => setName(e.target.value) }),
+                h('label', { className: 'dgs-sub', style: { display: 'flex', gap: 4, alignItems: 'center' } },
+                  h('input', { type: 'checkbox', checked: importForm.mirror, onChange: (e) => setImportForm({ ...importForm, mirror: e.target.checked }) }), '镜像同步'),
+                h('label', { className: 'dgs-sub', style: { display: 'flex', gap: 4, alignItems: 'center' } },
+                  h('input', { type: 'checkbox', checked: isPrivate, onChange: (e) => setIsPrivate(e.target.checked) }), t('private')),
+                h('button', { className: 'dgs-btn', disabled: busy || !name.trim() || !importForm.url.trim(), onClick: importRepo }, busy ? '导入中…' : '导入')),
+              h('div', { className: 'dgs-sub', style: { marginTop: 6 } }, '私有仓库可在地址里带凭据：https://user:token@host/owner/repo.git；勾选「镜像同步」后每小时自动拉取上游更新。'))),
         h('div', { style: { height: 10 } }),
         h('div', { style: { fontWeight: 700, margin: '4px 0 10px' } }, `${t('myRepos')}（${me.repos.length}）`),
         me.repos.length === 0 ? h('div', { className: 'dgs-empty' }, t('emptyRepo'))
@@ -2144,7 +2648,7 @@ function GitPage({ onClose, t, standalone }) {
       h('div', { className: 'dgs-row' }, title, badge, h('span', { style: { flex: 1 } }), stats, del), desc)
   }
 
-  const navItems = [['repos', t('myRepos')], ['explore', '探索'], ['orgs', '组织'], ['admin', '管理']]
+  const navItems = [['repos', t('myRepos')], ['myissues', '工单'], ['mypulls', 'PR'], ['notifications', '通知'], ['explore', '探索'], ['orgs', '组织'], ['admin', '管理']]
   return h('div', { className: 'dgs-page' },
     h('div', { className: 'dgs-head' },
       h('span', { className: 'dgs-h1' }, t('title')),
@@ -2152,7 +2656,9 @@ function GitPage({ onClose, t, standalone }) {
         navItems.map(([k, label]) =>
           h('button', { key: k, className: 'dgs-btn ghost',
             style: view === k ? { color: 'var(--dsw-alias-state-business-primary)', borderColor: 'var(--dsw-alias-state-business-primary)55' } : undefined,
-            onClick: () => nav('/' + k) }, label))),
+            onClick: () => nav('/' + k) },
+            label,
+            k === 'notifications' && unread > 0 ? h('span', { className: 'dgs-notif-dot' }, unread > 99 ? '99+' : unread) : null))),
       h('button', { className: 'dgs-close', onClick: onClose, title: 'Esc' }, '✕')),
     h('div', { className: 'dgs-body' }, body),
     toast ? h('div', { className: 'dgs-toast' }, toast) : null)
@@ -2162,6 +2668,20 @@ function GitPage({ onClose, t, standalone }) {
     const d = await api('POST', '/repos', { name, private: isPrivate, autoInit: true })
     setBusy(false)
     if (d.ok) { setName(''); notify('✓ ' + name); reload() } else notify(d.error || 'failed')
+  }
+
+  async function importRepo() {
+    setBusy(true)
+    const d = await api('POST', '/dsh/migrate', {
+      cloneAddr: importForm.url.trim(), name: name.trim(), private: isPrivate, mirror: importForm.mirror,
+    })
+    setBusy(false)
+    if (d && d.ok) {
+      const repoName = name
+      setName(''); setImportForm({ url: '', mirror: false })
+      notify('✓ ' + repoName)
+      nav('/r/' + d.owner + '/' + d.name)
+    } else notify((d && d.error) || 'failed')
   }
 }
 
@@ -2326,9 +2846,17 @@ html[data-dsh-git-active] .dsh-git-entry{background:var(--dsw-active,rgba(128,12
   entry.addEventListener('click', () => openGitPage(t))
   const stats = entry.querySelector('.dsh-git-entry-stats')
   const refreshStats = () => {
+    let repos = ''
     fetch(API + '/me').then((r) => r.json()).then((d) => {
-      if (stats && d && Array.isArray(d.repos)) stats.textContent = String(d.repos.length)
-    }).catch(() => {})
+      if (d && Array.isArray(d.repos)) repos = String(d.repos.length)
+    }).catch(() => {}).then(() =>
+      fetch(API + '/dsh/notifications/count').then((r) => r.json()).then((d) => {
+        if (!stats) return
+        const unread = d && typeof d.unread === 'number' ? d.unread : 0
+        stats.textContent = repos + (unread > 0 ? ' · ' + unread + ' 未读' : '')
+        if (unread > 0) stats.style.color = 'var(--dsw-alias-state-error-primary)'
+        else stats.style.color = ''
+      }).catch(() => { if (stats) stats.textContent = repos }))
   }
   refreshStats()
   const poll = setInterval(refreshStats, 30000)

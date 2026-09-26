@@ -160,6 +160,9 @@ function toIssueComment(cm: any, issue: any, repo: Repository): any {
     html_url: `${repo.HTMLURL()}/issues/${issue.index}#issuecomment-${cm.id}`,
     user: poster ? toUser(poster, true) : null,
     body: cm.content ?? '',
+    // dsh 扩展字段：type=2 表示「提交关单」事件（commit_sha 指向关单提交）
+    type: cm.type ?? 0,
+    commit_sha: cm.commit_sha ?? '',
     created_at: new Date((cm.created_unix ?? 0) * 1000).toISOString(),
     updated_at: new Date((cm.updated_unix ?? 0) * 1000).toISOString(),
   };
@@ -633,7 +636,60 @@ export function registerAPIRoutes(m: Router): void {
     });
 
   m.post('/api/v1/repos/migrate', reqTokenWrap(async (ctx: APIContext) => {
-    ctx.errorStatus(422, 'Migration is not supported by this build.');
+    const body = (await ctx.c.form()) as any;
+    let cloneAddr = String(body.clone_addr ?? '').trim();
+    const repoName = String(body.repo_name ?? body.name ?? '').trim();
+    if (!/^https?:\/\//.test(cloneAddr)) {
+      ctx.errorStatus(422, 'only http(s) clone addresses are supported');
+      return;
+    }
+    // 可选的 basic 凭据注入（gogs MigrateRepoForm.auth_username/auth_password）
+    const authUser = String(body.auth_username ?? '');
+    if (authUser && !cloneAddr.includes('@')) {
+      cloneAddr = cloneAddr.replace(/^(https?:\/\/)/, `$1${encodeURIComponent(authUser)}:${encodeURIComponent(String(body.auth_password ?? ''))}@`);
+    }
+    if (!repoName || !/^[a-zA-Z0-9_.-]+$/.test(repoName) || repoName.length > 100) {
+      ctx.c.JSON(422, [{ fieldNames: ['repo_name'], classification: 'RequiredError', message: 'Required' }]);
+      return;
+    }
+    const owner = ctx.user!;
+    if (db.getRepoByName(owner.name, repoName)) {
+      ctx.errorStatus(422, 'The repository with the same name already exists.');
+      return;
+    }
+    const isMirror = !!body.mirror;
+    const { createRepositoryRecord } = await import('../repox.js');
+    const repo = await createRepositoryRecord(ctx.user!, owner, {
+      name: repoName,
+      description: String(body.description ?? ''),
+      private: conf.forcePrivate || !!body.private,
+      autoInit: false,
+      mirror: isMirror,
+    });
+    const dir = repo.RepoPath();
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(path.dirname(dir), { recursive: true });
+      await git.git(process.cwd(), 'clone', '--mirror', cloneAddr, dir);
+      const svc = await import('../gitx/service.js');
+      svc.createDelegateHooks(dir);
+      await git.updateServerInfo(dir);
+      const def = await git.getDefaultBranch(dir);
+      const { size } = await git.countObjects(dir);
+      db.updateRepoColumns(repo.id, { is_bare: 0, ...(def ? { default_branch: def } : {}), size });
+      if (isMirror) {
+        const now = Math.floor(Date.now() / 1000);
+        db.db().prepare('INSERT INTO mirror (repo_id, interval, enable_prune, updated_unix, next_update_unix) VALUES (?,?,0,?,?)').run(repo.id, 0, now, now);
+      }
+      ctx.c.JSON(201, toRepository(db.getRepoByID(repo.id)!, { admin: true, push: true, pull: true }));
+    } catch (e: any) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      db.db().prepare('DELETE FROM repository WHERE id = ?').run(repo.id);
+      db.db().prepare('UPDATE user SET num_repos = MAX(num_repos - 1, 0) WHERE id = ?').run(owner.id);
+      ctx.errorStatus(500, 'clone failed: ' + String(e?.message ?? e).slice(0, 160));
+    }
   }));
 
   m.delete('/api/v1/repos/:username/:reponame', repoGroup(async (ctx: APIContext) => {
@@ -1311,7 +1367,7 @@ function registerRepoSubRoutes(
         path: e.name,
         mode: e.mode === '160000' ? '160000' : type === '040000' ? '040000' : e.mode,
         type: e.type,
-        size: e.type === 'blob' ? await git.entrySize(repoDir, e.sha) : 0,
+        size: e.type === 'blob' ? e.size : 0,
         sha: e.sha,
         url: `${conf.externalURL}api/v1/repos/${repo.FullName()}/git/trees/${e.sha}`,
       });
@@ -1478,6 +1534,8 @@ function registerRepoSubRoutes(
     const { issueAction, ActionType } = await import('../db/actions.js');
     const issue = db.getIssueByID(issueID)!;
     await issueAction(ActionType.CREATE_ISSUE, ctx.user!, repo, issue);
+    const { markIssueUnread } = await import('../notify.js');
+    markIssueUnread(issue, ctx.UserID(), { mentionContent: String(body.body ?? ''), assigned: !!assigneeID });
     ctx.c.JSON(201, toIssue(db.getIssueByID(issueID), repo));
   }));
 
@@ -1537,9 +1595,12 @@ function registerRepoSubRoutes(
     if (body.title) cols['name'] = String(body.title);
     if (body.body !== undefined) cols['content'] = String(body.body);
     const isWriter = ctx.repo.AccessMode >= db.AccessMode.WRITE;
+    let assigneeChanged = false;
     if (isWriter && body.assignee !== undefined) {
       const assignee = body.assignee ? db.getUserByUsername(String(body.assignee)) : null;
-      cols['assignee_id'] = assignee?.id ?? null;
+      const nextID = assignee?.id ?? null;
+      assigneeChanged = (nextID ?? 0) !== ((issue as any).assignee_id ?? 0) && nextID !== null;
+      cols['assignee_id'] = nextID;
     }
     if (isWriter && body.milestone !== undefined) {
       cols['milestone_id'] = Number(body.milestone) || null;
@@ -1549,6 +1610,10 @@ function registerRepoSubRoutes(
     }
     db.updateIssueColumns(issue.id, cols);
     db.refreshIssueCounts(repo.id);
+    if (assigneeChanged || body.body !== undefined || body.state !== undefined) {
+      const { markIssueUnread } = await import('../notify.js');
+      markIssueUnread(db.getIssueByID(issue.id)!, ctx.UserID(), { mentionContent: String(body.body ?? ''), assigned: assigneeChanged });
+    }
     ctx.c.JSON(201, toIssue(db.getIssueByID(issue.id), repo));
   }));
 
@@ -1589,6 +1654,8 @@ function registerRepoSubRoutes(
     const info = db.db().prepare('INSERT INTO comment (type, poster_id, issue_id, content, created_unix, updated_unix) VALUES (0,?,?,?,?,?)').run(ctx.UserID(), issue.id, content, now, now);
     db.db().prepare('UPDATE issue SET num_comments = num_comments + 1 WHERE id = ?').run(issue.id);
     const cm = db.getCommentByID(Number(info.lastInsertRowid))!;
+    const { markIssueUnread } = await import('../notify.js');
+    markIssueUnread(issue, ctx.UserID(), { mentionContent: content });
     ctx.c.JSON(201, toIssueComment(cm, issue, repo));
   }));
 

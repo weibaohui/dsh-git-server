@@ -479,3 +479,15 @@ CREATE TABLE IF NOT EXISTS version (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   version INTEGER
 );
+
+-- dsh 扩展：PR 评审（每人一条最新结论，approved=1 通过 / 0 请求修改）
+CREATE TABLE IF NOT EXISTS pr_review (
+  id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  repo_id INTEGER,
+  issue_id INTEGER,
+  reviewer_id INTEGER,
+  approved INTEGER NOT NULL DEFAULT 0,
+  content TEXT,
+  created_unix INTEGER
+);
+CREATE INDEX IF NOT EXISTS IDX_pr_review_issue_id ON pr_review (issue_id);

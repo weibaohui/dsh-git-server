@@ -17,6 +17,18 @@ import * as svc from './gitx/service.js';
 
 function requireAuth() { return { authenticateUserByToken }; }
 
+/** token 认证（非仓库作用域端点用，如通知/我的工单/导入）。 */
+function authUser(c: Context): any | null {
+  const header = String(c.req.headers.authorization ?? '');
+  const token = /^token (.+)$/.exec(header)?.[1] ?? '';
+  const user = token ? authenticateUserByToken(token) : null;
+  if (!user) {
+    c.JSON(401, { error: 'unauthorized' });
+    return null;
+  }
+  return user;
+}
+
 export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; post: (p: string, ...h: any[]) => void; patch: (p: string, ...h: any[]) => void; delete: (p: string, ...h: any[]) => void }): void {
   // ── token 认证 + 仓库解析（:o/:r） ─────────────────────────────
   const authRepo = (c: Context, needWrite = false): { repo: any; user: any } | null => {
@@ -74,7 +86,10 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
         }
       }
     } catch { /* no readme */ }
-    const numCommits = Number((await git.git(dir, 'rev-list', '--count', '--end-of-options', def))?.toString('utf8').trim() || 0);
+    let numCommits = 0;
+    try {
+      numCommits = Number((await git.git(dir, 'rev-list', '--count', '--end-of-options', def))?.toString('utf8').trim() || 0);
+    } catch { /* 空仓库没有任何提交 */ }
     const numReleases = (db.db().prepare('SELECT COUNT(*) AS c FROM release WHERE repo_id = ?').get(repo.id) as any).c;
     c.JSONSuccess({
       defaultBranch: def, branches, tags, readmeHtml,
@@ -97,25 +112,35 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     c.JSONSuccess(rows);
   });
 
-  // ── 文件列表（带每项最近提交） ────────────────────────────────
+  // ── 文件列表（带每项最近提交；一次 git log 批量解析，不再每条目起子进程） ──
   m.get('/api/dsh/repos/:o/:r/tree', async (c: Context) => {
     const ar = authRepo(c); if (!ar) return;
     const dir = ar.repo.RepoPath();
     const ref = c.Query('ref') || ar.repo.default_branch || conf.defaultBranch;
     const p = c.Query('path');
     const tree = await git.lsTree(dir, ref, p || '');
-    if (!tree) { c.JSON(404, { error: 'not found' }); return; }
-    const entries = [];
-    for (const e of tree.entries) {
-      const epath = p ? p + '/' + e.name : e.name;
-      let size = 0;
-      if (e.type === 'blob') size = Number((await git.git(dir, 'cat-file', '-s', e.sha))?.toString('utf8').trim() || 0);
-      const out = (await git.git(dir, 'log', '-1', '--pretty=format:%h%x1f%s%x1f%ct%x1f%an', '--end-of-options', ref, '--', epath))?.toString('utf8') ?? '';
-      const [lsha, lmsg, ldate, lauthor] = out.split('\x1f');
-      entries.push({
-        name: e.name, type: e.type, path: epath, size,
-        last: lsha ? { sha: lsha, msg: (lmsg || '').slice(0, 90), date: Number(ldate) * 1000, author: lauthor || '' } : null,
-      });
+    if (!tree) {
+      // 空仓库（默认分支尚无提交）按空目录返回，而不是 404
+      const anyCommit = await git.getCommit(dir, ar.repo.default_branch || conf.defaultBranch);
+      if (!anyCommit) { c.JSONSuccess({ entries: [] }); return; }
+      c.JSON(404, { error: 'not found' });
+      return;
+    }
+    const entries = tree.entries.map((e) => ({
+      name: e.name, type: e.type, path: p ? p + '/' + e.name : e.name,
+      size: e.type === 'blob' ? e.size : 0,
+      last: null as git.LastCommit | null,
+    }));
+    const lastMap = await git.lastCommitsForPaths(dir, ref, entries.map((e) => e.path));
+    for (const e of entries) {
+      let last = lastMap.get(e.path) ?? null;
+      if (!last) {
+        // 批量遍历上限之外的陈旧条目：单条兜底（很少见）
+        const out = (await git.gitOK(dir, 'log', '-1', '--pretty=format:%h%x1f%s%x1f%ct%x1f%an', '--end-of-options', ref, '--', e.path))?.toString('utf8') ?? '';
+        const [lsha, lmsg, ldate, lauthor] = out.split('\x1f');
+        if (lsha) last = { sha: lsha, msg: (lmsg || '').slice(0, 90), date: Number(ldate) * 1000, author: lauthor || '' };
+      }
+      e.last = last;
     }
     c.JSONSuccess({ entries });
   });
@@ -164,6 +189,10 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     const base = String(body.base ?? '') || repo.default_branch || conf.defaultBranch;
     if (!title || !head) { c.JSON(422, { error: 'title and head required' }); return; }
     try {
+      // 先算 diff/patch（分支不存在等失败不落任何行，避免幽灵工单）
+      const headDir = repo.RepoPath();
+      const mergeBase = (await git.mergeBase(headDir, base, head)) ?? '';
+      const patch = await git.git(headDir, 'diff', '--full-index', '--binary', '--end-of-options', mergeBase || base, head);
       const { issueAction, ActionType } = await import('./db/actions.js');
       const index = db.maxIssueIndex(repo.id) + 1;
       const now = Math.floor(Date.now() / 1000);
@@ -181,9 +210,6 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
         db.db().prepare('UPDATE issue SET milestone_id = ?, assignee_id = ? WHERE id = ?')
           .run(Number(body.milestone) || 0, au ? au.id : 0, issueID);
       }
-      const headDir = repo.RepoPath();
-      const mergeBase = (await git.mergeBase(headDir, base, head)) ?? '';
-      const patch = await git.git(headDir, 'diff', '--full-index', '--binary', '--end-of-options', mergeBase || base, head);
       const patchDir = path.join(conf.appDataPath, 'patches', String(repo.id));
       fs.mkdirSync(patchDir, { recursive: true });
       fs.writeFileSync(path.join(patchDir, `${index}.patch`), patch);
@@ -196,20 +222,56 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
       db.refreshIssueCounts(repo.id);
       const issue = db.getIssueByID(issueID)!;
       await issueAction(ActionType.CREATE_PULL_REQUEST, user, repo, issue);
+      const { markIssueUnread } = await import('./notify.js');
+      markIssueUnread(issue, user.id, { mentionContent: String(body.body ?? ''), assigned: true });
       c.JSONSuccess({ ok: true, index });
     } catch (e: any) {
       c.JSON(500, { error: String(e?.message ?? e).slice(0, 200) });
     }
   });
 
-  // ── 仓库信息（设置页用） ─────────────────────────────────────
+  // ── 仓库信息（设置页用；镜像仓带上游地址与同步时间） ────────────
   m.get('/api/dsh/repos/:o/:r', async (c: Context) => {
     const ar = authRepo(c); if (!ar) return;
+    let mirror: any = null;
+    if (ar.repo.is_mirror) {
+      const { mirrorAddress } = await import('./mirror.js');
+      const row = db.db().prepare('SELECT updated_unix, next_update_unix FROM mirror WHERE repo_id = ?').get(ar.repo.id) as any;
+      mirror = {
+        address: mirrorAddress(ar.repo.RepoPath()),
+        updatedAt: (row?.updated_unix ?? 0) * 1000,
+        nextAt: (row?.next_update_unix ?? 0) * 1000,
+      };
+    }
     c.JSONSuccess({
       name: ar.repo.name, owner: ar.repo.OwnerName(),
       description: ar.repo.description || '', private: !!ar.repo.is_private,
       defaultBranch: ar.repo.default_branch || conf.defaultBranch,
+      isMirror: !!ar.repo.is_mirror, mirror,
     });
+  });
+
+  // ── 镜像：立即同步（拉取上游更新） ──────────────────────────────
+  m.post('/api/dsh/repos/:o/:r/mirror-sync', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    if (!ar.repo.is_mirror) { c.JSON(422, { error: '不是镜像仓库' }); return; }
+    try {
+      const { syncMirror } = await import('./mirror.js');
+      await syncMirror(ar.repo.id, ar.user.id);
+      const row = db.db().prepare('SELECT updated_unix, next_update_unix FROM mirror WHERE repo_id = ?').get(ar.repo.id) as any;
+      c.JSONSuccess({ ok: true, updatedAt: (row?.updated_unix ?? 0) * 1000, nextAt: (row?.next_update_unix ?? 0) * 1000 });
+    } catch (e: any) {
+      c.JSON(500, { error: '同步失败：' + String(e?.message ?? e).slice(0, 160) });
+    }
+  });
+
+  // ── fork 列表（谁复刻了本仓库） ─────────────────────────────────
+  m.get('/api/dsh/repos/:o/:r/forks', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const rows = db.db().prepare(
+      'SELECT r.name, r.num_stars, r.updated_unix, u.name AS owner FROM repository r JOIN user u ON u.id = r.owner_id WHERE r.fork_id = ? ORDER BY r.id DESC LIMIT 50'
+    ).all(ar.repo.id) as any[];
+    c.JSONSuccess(rows.map((r) => ({ name: r.name, owner: r.owner, stars: r.num_stars || 0, updatedAt: (r.updated_unix ?? 0) * 1000 })));
   });
 
   // ── 单条 issue（详情页编辑用） ───────────────────────────────
@@ -514,9 +576,12 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     if (body.title !== undefined) { sets.push('name = ?'); args.push(String(body.title)); }
     if (body.body !== undefined) { sets.push('content = ?'); args.push(String(body.body)); }
     if (body.milestone !== undefined) { sets.push('milestone_id = ?'); args.push(Number(body.milestone) || 0); }
+    let assigneeChanged = false;
     if (body.assignee !== undefined) {
       const au = body.assignee ? db.getUserByUsername(String(body.assignee)) : null;
-      sets.push('assignee_id = ?'); args.push(au ? au.id : 0);
+      const nextID = au ? au.id : 0;
+      assigneeChanged = nextID !== (issue.assignee_id ?? 0) && nextID !== 0;
+      sets.push('assignee_id = ?'); args.push(nextID);
     }
     if (sets.length) {
       sets.push('updated_unix = ?'); args.push(Math.floor(Date.now() / 1000), issue.id);
@@ -529,6 +594,10 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
       }
     }
     db.refreshIssueCounts(ar.repo.id);
+    if (assigneeChanged || body.body !== undefined) {
+      const { markIssueUnread } = await import('./notify.js');
+      markIssueUnread(db.getIssueByID(issue.id)!, ar.user.id, { mentionContent: String(body.body ?? ''), assigned: assigneeChanged });
+    }
     c.JSONSuccess({ ok: true });
   });
 
@@ -617,7 +686,7 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
   // ── webhook CRUD ────────────────────────────────────────────────
   m.get('/api/dsh/repos/:o/:r/hooks', async (c: Context) => {
     const ar = authRepo(c); if (!ar) return;
-    const rows = db.db().prepare('SELECT id, url, content_type, is_active, events, created_unix FROM webhook WHERE repo_id = ? ORDER BY id').all(ar.repo.id);
+    const rows = db.db().prepare('SELECT id, url, content_type, is_active, events, last_status, created_unix FROM webhook WHERE repo_id = ? ORDER BY id').all(ar.repo.id);
     c.JSONSuccess(rows);
   });
   m.post('/api/dsh/repos/:o/:r/hooks', async (c: Context) => {
@@ -646,39 +715,8 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     c.JSONSuccess({ ok: true });
   });
 
-  // ── 部署密钥（settings/keys） ─────────────────────────────────
-  m.get('/api/dsh/repos/:o/:r/keys', async (c: Context) => {
-    const ar = authRepo(c); if (!ar) return;
-    const rows = db.db().prepare(
-      'SELECT k.id, k.name, k.fingerprint, k.created_unix FROM deploy_key dk JOIN public_key k ON k.id = dk.key_id WHERE dk.repo_id = ? ORDER BY k.id'
-    ).all(ar.repo.id);
-    c.JSONSuccess(rows);
-  });
-  m.post('/api/dsh/repos/:o/:r/keys', async (c: Context) => {
-    const ar = authRepo(c, true); if (!ar) return;
-    const body = await c.form();
-    const name = String(body.name ?? '').trim();
-    const content = String(body.content ?? '').trim();
-    if (!name || !content) { c.JSON(422, { error: 'name and content required' }); return; }
-    let fingerprint = '';
-    try {
-      const tmp = path.join(os.tmpdir(), 'dgs-key-' + Date.now());
-      fs.writeFileSync(tmp, content);
-      fingerprint = String((await git.git(os.tmpdir(), 'ssh-keygen', '-lf', tmp))?.toString('utf8') || '').trim();
-      fs.rmSync(tmp, { force: true });
-    } catch { fingerprint = 'ssh-key'; }
-    const now = Math.floor(Date.now() / 1000);
-    const info = db.db().prepare('INSERT INTO public_key (owner_id, name, fingerprint, content, created_unix, updated_unix) VALUES (?,?,?,?,?,?)')
-      .run(ar.user.id, name, fingerprint, content, now, now);
-    db.db().prepare('INSERT INTO deploy_key (key_id, repo_id, name, fingerprint, mode) VALUES (?,?,?,?,1)')
-      .run(Number(info.lastInsertRowid), ar.repo.id, name, fingerprint);
-    c.JSONSuccess({ id: Number(info.lastInsertRowid), name, fingerprint });
-  });
-  m.delete('/api/dsh/repos/:o/:r/keys/:id', async (c: Context) => {
-    const ar = authRepo(c, true); if (!ar) return;
-    db.db().prepare('DELETE FROM deploy_key WHERE key_id = ? AND repo_id = ?').run(c.ParamsInt64(':id'), ar.repo.id);
-    c.JSONSuccess({ ok: true });
-  });
+  // 注：部署密钥（deploy_key）是 SSH 专属概念——本插件有意只走 HTTP（不写宿主
+  // ~/.ssh），git 凭据走 user-management，故不提供部署密钥端点/界面。
 
   // ── 协作者 ────────────────────────────────────────────────────
   m.get('/api/dsh/repos/:o/:r/collaborators', async (c: Context) => {
@@ -688,12 +726,26 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     ).all(ar.repo.id) as any[];
     c.JSONSuccess(rows);
   });
+  const COLLAB_MODES: Record<string, number> = { read: 1, write: 2, admin: 3 };
   m.post('/api/dsh/repos/:o/:r/collaborators/:name', async (c: Context) => {
     const ar = authRepo(c, true); if (!ar) return;
     const u = db.getUserByUsername(c.Params(':name'));
     if (!u) { c.JSON(404, { error: 'user not found' }); return; }
+    const body = await c.form().catch(() => ({} as any));
+    const mode = COLLAB_MODES[String((body as any).mode ?? 'write')] ?? 2;
     const exists = db.db().prepare('SELECT 1 FROM collaboration WHERE user_id = ? AND repo_id = ?').get(u.id, ar.repo.id);
-    if (!exists) db.db().prepare('INSERT INTO collaboration (user_id, repo_id, mode) VALUES (?,?,2)').run(u.id, ar.repo.id);
+    if (!exists) db.db().prepare('INSERT INTO collaboration (user_id, repo_id, mode) VALUES (?,?,?)').run(u.id, ar.repo.id, mode);
+    else db.db().prepare('UPDATE collaboration SET mode = ? WHERE user_id = ? AND repo_id = ?').run(mode, u.id, ar.repo.id);
+    c.JSONSuccess({ ok: true });
+  });
+  m.patch('/api/dsh/repos/:o/:r/collaborators/:name', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const u = db.getUserByUsername(c.Params(':name'));
+    if (!u) { c.JSON(404, { error: 'user not found' }); return; }
+    const body = await c.form();
+    const mode = COLLAB_MODES[String(body.mode ?? '')];
+    if (!mode) { c.JSON(422, { error: 'mode must be read|write|admin' }); return; }
+    db.db().prepare('UPDATE collaboration SET mode = ? WHERE user_id = ? AND repo_id = ?').run(mode, u.id, ar.repo.id);
     c.JSONSuccess({ ok: true });
   });
   m.delete('/api/dsh/repos/:o/:r/collaborators/:name', async (c: Context) => {
@@ -715,11 +767,14 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     c.JSONSuccess({ ok: true });
   });
 
-  // ── 用户 profile（资料+仓库+活动） ─────────────────────────────
+  // ── 用户 profile（资料+仓库+活动+关注关系） ─────────────────────
   m.get('/api/dsh/users/:name', async (c: Context) => {
     const u = db.getUserByUsername(c.Params(':name'));
     if (!u) { c.JSON(404, { error: 'user not found' }); return; }
-    const repos = db.listReposByOwner(u.id).filter((r: any) => !r.is_private || c.IsLogged).map((r: any) => ({
+    // 可选登录：带了有效 token 才计算「我是否关注了他」
+    const token = /^token (.+)$/.exec(String(c.req.headers.authorization ?? ''))?.[1] ?? '';
+    const viewer = token ? authenticateUserByToken(token) : null;
+    const repos = db.listReposByOwner(u.id).filter((r: any) => !r.is_private || c.IsLogged || viewer).map((r: any) => ({
       name: r.name, owner: r.OwnerName(), description: r.description, stars: r.num_stars,
       updated: r.updated_unix,
     }));
@@ -730,10 +785,25 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     const following = db.db().prepare('SELECT u.name FROM follow f JOIN user u ON u.id = f.follow_id WHERE f.user_id = ?').all(u.id).map((x: any) => x.name);
     c.JSONSuccess({
       name: u.name, fullName: u.full_name || '', email: u.email, isAdmin: u.is_admin === 1,
-      followers, following, repos, activity: activity.map((a: any) => ({
+      created: u.created_unix ?? 0,
+      followers, following,
+      isFollowing: viewer ? db.isFollowing(viewer.id, u.id) : false,
+      isSelf: viewer ? viewer.id === u.id : false,
+      repos, activity: activity.map((a: any) => ({
         type: a.op_type, repo: a.owner + '/' + a.repo, ref: a.ref_name, content: a.content, date: a.created_unix,
       })),
     });
+  });
+
+  // ── 关注/取关（toggle） ────────────────────────────────────────
+  m.post('/api/dsh/users/:name/follow', async (c: Context) => {
+    const user = authUser(c); if (!user) return;
+    const target = db.getUserByUsername(c.Params(':name'));
+    if (!target) { c.JSON(404, { error: 'user not found' }); return; }
+    if (target.id === user.id) { c.JSON(422, { error: '不能关注自己' }); return; }
+    const on = !db.isFollowing(user.id, target.id);
+    if (on) db.followUser(user.id, target.id); else db.unfollowUser(user.id, target.id);
+    c.JSONSuccess({ on, followers: (db.db().prepare('SELECT COUNT(*) AS c FROM follow WHERE follow_id = ?').get(target.id) as any).c });
   });
 
   // ── 组织：我的组织列表 / 组织详情 / 创建 ────────────────────────
@@ -922,6 +992,8 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
       db.refreshIssueCounts(repo.id);
       const { issueAction, ActionType } = await import('./db/actions.js');
       await issueAction(ActionType.MERGE_PULL_REQUEST, user, repo, issue);
+      const { markIssueUnread } = await import('./notify.js');
+      markIssueUnread(issue, user.id);
       c.JSONSuccess({ ok: true });
     } catch (e: any) {
       console.error('[dsh merge]', e);
@@ -1033,17 +1105,25 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
       'SELECT r.id, r.tag_name, r.title, r.note, r.is_draft, r.is_prerelease, r.created_unix, u.name AS author FROM `release` r LEFT JOIN user u ON u.id = r.publisher_id WHERE r.repo_id = ? ORDER BY r.created_unix DESC'
     ).all(ar.repo.id) as any[];
     const dir = ar.repo.RepoPath();
+    const attachDir = path.join(conf.appDataPath, 'attachments');
     const out = [];
     for (const r of rows) {
       let behind = 0;
       try {
         behind = Number((await git.git(dir, 'rev-list', '--count', '--end-of-options', `${r.tag_name}..${r.target || ar.repo.default_branch || conf.defaultBranch}`))?.toString('utf8').trim() || 0);
       } catch { behind = 0; }
+      const assets = (db.db().prepare('SELECT id, uuid, name, created_unix FROM attachment WHERE release_id = ? ORDER BY id').all(r.id) as any[])
+        .map((a) => {
+          let size = 0;
+          try { size = fs.statSync(path.join(attachDir, a.uuid)).size; } catch { /* 文件缺失按 0 */ }
+          return { id: a.id, name: a.name, size, createdAt: a.created_unix };
+        });
       out.push({
         id: r.id, tag: r.tag_name, title: r.title, draft: !!r.is_draft, prerelease: !!r.is_prerelease,
         noteHtml: r.note ? sanitizeHTML(markdown(r.note, conf.subpath + '/', {})) : '',
         noteRaw: r.note || '',
         author: r.author, createdAt: r.created_unix, target: r.target || '', behind,
+        assets,
       });
     }
     c.JSONSuccess(out);
@@ -1092,5 +1172,305 @@ export function registerDshRoutes(m: { get: (p: string, ...h: any[]) => void; po
     } catch (e: any) {
       c.JSON(500, { error: String(e?.message ?? e).slice(0, 200) });
     }
+  });
+
+  // ── 通知（issue_user 未读模型） ─────────────────────────────────
+  m.get('/api/dsh/notifications/count', async (c: Context) => {
+    const user = authUser(c); if (!user) return;
+    const { unreadCount } = await import('./notify.js');
+    c.JSONSuccess({ unread: unreadCount(user.id) });
+  });
+
+  m.get('/api/dsh/notifications', async (c: Context) => {
+    const user = authUser(c); if (!user) return;
+    const { unreadCount } = await import('./notify.js');
+    const rows = db.db().prepare(
+      `SELECT iu.issue_id, iu.is_read, iu.is_assigned, iu.is_mentioned, iu.is_poster,
+              i."index", i.name AS title, i.is_pull, i.is_closed, i.updated_unix,
+              r.name AS repo_name, ow.name AS owner_name
+       FROM issue_user iu
+       JOIN issue i ON i.id = iu.issue_id
+       JOIN repository r ON r.id = i.repo_id
+       JOIN user ow ON ow.id = r.owner_id
+       WHERE iu.uid = ? AND iu.is_read = 0
+       ORDER BY i.updated_unix DESC LIMIT 100`
+    ).all(user.id) as any[];
+    c.JSONSuccess({
+      unread: unreadCount(user.id),
+      items: rows.map((r) => ({
+        repoOwner: r.owner_name, repoName: r.repo_name, index: Number(r.index),
+        title: r.title, isPull: !!r.is_pull, isClosed: !!r.is_closed,
+        updatedAt: (r.updated_unix ?? 0) * 1000,
+        reason: r.is_mentioned ? 'mentioned' : r.is_assigned ? 'assigned' : r.is_poster ? 'poster' : 'comment',
+      })),
+    });
+  });
+
+  m.post('/api/dsh/notifications/read-all', async (c: Context) => {
+    const user = authUser(c); if (!user) return;
+    db.db().prepare('UPDATE issue_user SET is_read = 1 WHERE uid = ?').run(user.id);
+    c.JSONSuccess({ ok: true });
+  });
+
+  m.post('/api/dsh/repos/:o/:r/issues/:idx/read', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const issue = db.getIssueByIndex(ar.repo.id, c.ParamsInt64(':idx'));
+    if (!issue) { c.JSON(404, { error: 'not found' }); return; }
+    const { markIssueRead } = await import('./notify.js');
+    markIssueRead(ar.user.id, issue.id);
+    c.JSONSuccess({ ok: true });
+  });
+
+  // ── 我的工单/PR 聚合（跨仓库） ──────────────────────────────────
+  m.get('/api/dsh/my/issues', async (c: Context) => {
+    const user = authUser(c); if (!user) return;
+    const isPull = c.Query('type') === 'pulls' ? 1 : 0;
+    const filter = c.Query('filter') || 'all';
+    const where: string[] = ['i.is_pull = ?'];
+    const args: any[] = [isPull];
+    if (filter === 'created') { where.push('i.poster_id = ?'); args.push(user.id); }
+    else if (filter === 'assigned') { where.push('i.assignee_id = ?'); args.push(user.id); }
+    else { where.push('(i.poster_id = ? OR i.assignee_id = ?)'); args.push(user.id, user.id); }
+    const state = c.Query('state');
+    if (state === 'open' || state === 'closed') { where.push('i.is_closed = ?'); args.push(state === 'closed' ? 1 : 0); }
+    const rows = db.db().prepare(
+      `SELECT i.id, i."index", i.name AS title, i.is_closed, i.num_comments, i.updated_unix,
+              r.name AS repo_name, ow.name AS owner_name, pu.name AS poster_name, au.name AS assignee_name
+       FROM issue i
+       JOIN repository r ON r.id = i.repo_id
+       JOIN user ow ON ow.id = r.owner_id
+       LEFT JOIN user pu ON pu.id = i.poster_id
+       LEFT JOIN user au ON au.id = i.assignee_id
+       WHERE ${where.join(' AND ')} ORDER BY i.updated_unix DESC LIMIT 100`
+    ).all(...args) as any[];
+    c.JSONSuccess(rows.map((r) => ({
+      repoOwner: r.owner_name, repoName: r.repo_name, index: Number(r.index),
+      title: r.title, state: r.is_closed ? 'closed' : 'open', comments: r.num_comments || 0,
+      updatedAt: (r.updated_unix ?? 0) * 1000, author: r.poster_name || '', assignee: r.assignee_name || '',
+    })));
+  });
+
+  // ── 分支删除（此前 UI 调用的宿主路由不存在，一直 404） ────────────
+  m.delete('/api/dsh/repos/:o/:r/branches/*', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const branch = c.Params(':*');
+    if (!branch) { c.JSON(422, { error: 'branch required' }); return; }
+    if (branch === (ar.repo.default_branch || conf.defaultBranch)) { c.JSON(422, { error: '默认分支不可删除' }); return; }
+    const prot = db.db().prepare('SELECT 1 FROM protect_branch WHERE repo_id = ? AND name = ? AND protected = 1').get(ar.repo.id, branch);
+    if (prot) { c.JSON(403, { error: '分支受保护，不可删除' }); return; }
+    const dir = ar.repo.RepoPath();
+    const r = await git.gitOK(dir, 'update-ref', '-d', '--end-of-options', 'refs/heads/' + branch);
+    if (r === null) { c.JSON(500, { error: 'delete failed' }); return; }
+    const { deleteBranchAction } = await import('./db/actions.js');
+    await deleteBranchAction(ar.user, ar.repo, branch);
+    c.JSONSuccess({ ok: true });
+  });
+
+  // ── 分支保护（禁删/禁强推；推送侧由 update 钩子强制） ──────────────
+  m.get('/api/dsh/repos/:o/:r/protections', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const rows = db.db().prepare('SELECT name FROM protect_branch WHERE repo_id = ? AND protected = 1 ORDER BY name').all(ar.repo.id) as any[];
+    c.JSONSuccess(rows.map((r) => ({ branch: r.name })));
+  });
+  m.post('/api/dsh/repos/:o/:r/protections', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const body = await c.form();
+    const branch = String(body.branch ?? '').trim();
+    if (!branch) { c.JSON(422, { error: 'branch required' }); return; }
+    const on = body.protected !== false;
+    db.db().prepare(
+      'INSERT INTO protect_branch (repo_id, name, protected) VALUES (?,?,?) ON CONFLICT(repo_id, name) DO UPDATE SET protected = excluded.protected'
+    ).run(ar.repo.id, branch, on ? 1 : 0);
+    c.JSONSuccess({ ok: true });
+  });
+
+  // ── PR 评审（最简版：通过/请求修改 + 可附评论） ────────────────────
+  m.get('/api/dsh/repos/:o/:r/pulls/:idx/reviews', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const issue = db.getIssueByIndex(ar.repo.id, c.ParamsInt64(':idx'));
+    if (!issue || !issue.is_pull) { c.JSON(404, { error: 'pull not found' }); return; }
+    const rows = db.db().prepare(
+      'SELECT pr.reviewer_id, pr.approved, pr.content, pr.created_unix, u.name AS reviewer FROM pr_review pr JOIN user u ON u.id = pr.reviewer_id WHERE pr.issue_id = ? ORDER BY pr.id DESC'
+    ).all(issue.id) as any[];
+    const seen = new Set<number>();
+    const out = [];
+    for (const r of rows) {
+      if (seen.has(r.reviewer_id)) continue; // 每人只取最新一条
+      seen.add(r.reviewer_id);
+      out.push({ user: r.reviewer, approved: !!r.approved, content: r.content || '', createdAt: (r.created_unix ?? 0) * 1000 });
+    }
+    c.JSONSuccess(out);
+  });
+  m.post('/api/dsh/repos/:o/:r/pulls/:idx/reviews', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const issue = db.getIssueByIndex(ar.repo.id, c.ParamsInt64(':idx'));
+    if (!issue || !issue.is_pull) { c.JSON(404, { error: 'pull not found' }); return; }
+    const body = await c.form();
+    const content = String(body.content ?? '').trim();
+    const now = Math.floor(Date.now() / 1000);
+    db.db().prepare('DELETE FROM pr_review WHERE issue_id = ? AND reviewer_id = ?').run(issue.id, ar.user.id);
+    db.db().prepare('INSERT INTO pr_review (repo_id, issue_id, reviewer_id, approved, content, created_unix) VALUES (?,?,?,?,?,?)')
+      .run(ar.repo.id, issue.id, ar.user.id, body.approved ? 1 : 0, content, now);
+    if (content) {
+      db.db().prepare('INSERT INTO comment (type, poster_id, issue_id, content, created_unix, updated_unix) VALUES (0,?,?,?,?,?)').run(ar.user.id, issue.id, content, now, now);
+      db.db().prepare('UPDATE issue SET num_comments = num_comments + 1 WHERE id = ?').run(issue.id);
+    }
+    const { markIssueUnread } = await import('./notify.js');
+    markIssueUnread(issue, ar.user.id, { mentionContent: content });
+    c.JSONSuccess({ ok: true });
+  });
+
+  // ── 发版二进制附件 ─────────────────────────────────────────────
+  const attachDir = () => path.join(conf.appDataPath, 'attachments');
+  const MAX_ASSET_BYTES = 25 * 1024 * 1024;
+  m.post('/api/dsh/repos/:o/:r/releases/:id/assets', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const rel = db.getReleaseByID(ar.repo.id, c.ParamsInt64(':id'));
+    if (!rel) { c.JSON(404, { error: 'release not found' }); return; }
+    const body = await c.form();
+    const name = String(body.name ?? '').trim().replace(/[\\/]/g, '_');
+    if (!name) { c.JSON(422, { error: 'name required' }); return; }
+    const buf = Buffer.from(String(body.contentBase64 ?? ''), 'base64');
+    if (buf.length === 0) { c.JSON(422, { error: 'content required' }); return; }
+    if (buf.length > MAX_ASSET_BYTES) { c.JSON(413, { error: '附件超过 25MB 上限' }); return; }
+    const uuid = db.newUUID();
+    fs.mkdirSync(attachDir(), { recursive: true });
+    fs.writeFileSync(path.join(attachDir(), uuid), buf);
+    const info = db.db().prepare('INSERT INTO attachment (uuid, release_id, name, created_unix) VALUES (?,?,?,?)')
+      .run(uuid, rel.id, name, Math.floor(Date.now() / 1000));
+    c.JSONSuccess({ ok: true, asset: { id: Number(info.lastInsertRowid), name, size: buf.length } });
+  });
+  m.get('/api/dsh/repos/:o/:r/attachments/:assetId', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const a = db.db().prepare(
+      'SELECT at.id, at.uuid, at.name FROM attachment at JOIN `release` r ON r.id = at.release_id WHERE at.id = ? AND r.repo_id = ?'
+    ).get(c.ParamsInt64(':assetId'), ar.repo.id) as any;
+    if (!a) { c.JSON(404, { error: 'not found' }); return; }
+    const file = path.join(attachDir(), a.uuid);
+    if (!fs.existsSync(file)) { c.JSON(404, { error: 'file gone' }); return; }
+    const buf = fs.readFileSync(file);
+    c.res.setHeader('Content-Type', 'application/octet-stream');
+    c.res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(a.name)}`);
+    c.res.setHeader('Content-Length', String(buf.length));
+    c.res.statusCode = 200;
+    c.res.end(buf);
+    c.rendered = true;
+  });
+  m.delete('/api/dsh/repos/:o/:r/attachments/:assetId', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const a = db.db().prepare(
+      'SELECT at.id, at.uuid FROM attachment at JOIN `release` r ON r.id = at.release_id WHERE at.id = ? AND r.repo_id = ?'
+    ).get(c.ParamsInt64(':assetId'), ar.repo.id) as any;
+    if (!a) { c.JSON(404, { error: 'not found' }); return; }
+    db.db().prepare('DELETE FROM attachment WHERE id = ?').run(a.id);
+    fs.rmSync(path.join(attachDir(), a.uuid), { force: true });
+    c.JSONSuccess({ ok: true });
+  });
+
+  // ── 从 URL 导入仓库（可选镜像同步） ──────────────────────────────
+  m.post('/api/dsh/migrate', async (c: Context) => {
+    const user = authUser(c); if (!user) return;
+    const body = await c.form();
+    const cloneAddr = String(body.cloneAddr ?? '').trim();
+    const name = String(body.name ?? '').trim();
+    if (!/^https?:\/\//.test(cloneAddr)) { c.JSON(422, { error: '仅支持 http(s) 克隆地址' }); return; }
+    if (!name || !/^[a-zA-Z0-9_.-]+$/.test(name) || name.length > 100) { c.JSON(422, { error: '仓库名非法（字母数字 _.-）' }); return; }
+    const orgName = String(body.org ?? '');
+    const owner = orgName ? db.getUserByUsername(orgName) : user;
+    if (!owner) { c.JSON(404, { error: 'org not found' }); return; }
+    if (orgName) {
+      const mem = db.db().prepare('SELECT 1 FROM org_user WHERE org_id = ? AND uid = ? AND is_owner = 1').get(owner.id, user.id);
+      if (!mem && user.is_admin !== 1) { c.JSON(403, { error: '需要组织管理员' }); return; }
+    }
+    if (db.getRepoByOwnerAndName(owner, name)) { c.JSON(422, { error: '同名仓库已存在' }); return; }
+    const isMirror = !!body.mirror;
+    const { createRepositoryRecord } = await import('./repox.js');
+    const repo = await createRepositoryRecord(user, owner, {
+      name, description: String(body.description ?? ''), private: !!body.private, autoInit: false, mirror: isMirror,
+    });
+    const dir = repo.RepoPath();
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(path.dirname(dir), { recursive: true });
+      await git.git(process.cwd(), 'clone', '--mirror', cloneAddr, dir);
+      svc.createDelegateHooks(dir);
+      await git.updateServerInfo(dir);
+      const def = await git.getDefaultBranch(dir);
+      const { size } = await git.countObjects(dir);
+      db.updateRepoColumns(repo.id, { is_bare: 0, ...(def ? { default_branch: def } : {}), size });
+      if (isMirror) {
+        const now = Math.floor(Date.now() / 1000);
+        db.db().prepare('INSERT INTO mirror (repo_id, interval, enable_prune, updated_unix, next_update_unix) VALUES (?,?,0,?,?)').run(repo.id, 0, now, now);
+      }
+      c.JSONSuccess({ ok: true, owner: owner.name, name: repo.name });
+    } catch (e: any) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      db.db().prepare('DELETE FROM repository WHERE id = ?').run(repo.id);
+      db.db().prepare('UPDATE user SET num_repos = MAX(num_repos - 1, 0) WHERE id = ?').run(owner.id);
+      c.JSON(500, { error: '克隆失败：' + String(e?.message ?? e).slice(0, 160) });
+    }
+  });
+
+  // ── 代码搜索（git grep 包装，每文件最多 5 条、总共 100 条封顶） ─────
+  m.get('/api/dsh/repos/:o/:r/search', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const q = c.Query('q').trim();
+    if (!q) { c.JSON(422, { error: 'q required' }); return; }
+    const dir = ar.repo.RepoPath();
+    const ref = c.Query('ref') || ar.repo.default_branch || conf.defaultBranch;
+    const resolved = await git.resolveRef(dir, ref);
+    if (!resolved) { c.JSON(404, { error: 'ref not found' }); return; }
+    const out = await git.gitOK(dir, 'grep', '-n', '-I', '-i', '-m', '5', '-e', q, '--end-of-options', resolved);
+    const matches: any[] = [];
+    const prefix = resolved + ':';
+    if (out) {
+      for (const line of out.toString('utf8').split('\n')) {
+        if (!line.startsWith(prefix)) continue;
+        const m2 = /^(.*?):(\d+):(.*)$/.exec(line.slice(prefix.length));
+        if (!m2) continue;
+        matches.push({ path: m2[1], line: Number(m2[2]), text: m2[3].slice(0, 200) });
+        if (matches.length >= 100) break;
+      }
+    }
+    c.JSONSuccess({ matches, truncated: matches.length >= 100 });
+  });
+
+  // ── webhook 测试投递 + 最近投递记录 ──────────────────────────────
+  m.post('/api/dsh/repos/:o/:r/hooks/:id/test', async (c: Context) => {
+    const ar = authRepo(c, true); if (!ar) return;
+    const hook = db.getWebhookByID(ar.repo.id, c.ParamsInt64(':id'));
+    if (!hook) { c.JSON(404, { error: 'hook not found' }); return; }
+    const dir = ar.repo.RepoPath();
+    const def = ar.repo.default_branch || conf.defaultBranch;
+    const commits = await git.commitsByPage(dir, def, 1, 5).catch(() => [] as git.Commit[]);
+    const { deliverWebhook } = await import('./webhook.js');
+    deliverWebhook(hook as any, 'push', {
+      ref: 'refs/heads/' + def,
+      before: '',
+      after: commits[0]?.id ?? '',
+      commits: commits.map((cm) => ({
+        id: cm.id, message: cm.message, timestamp: cm.committer.when.toISOString(),
+        author: { name: cm.author.name, email: cm.author.email, username: cm.author.name },
+      })),
+      repository: { full_name: ar.repo.FullName(), html_url: ar.repo.HTMLURL(), name: ar.repo.name },
+      pusher: { username: ar.user.name },
+      sender: { username: ar.user.name },
+    }, ar.repo);
+    c.JSONSuccess({ ok: true });
+  });
+  m.get('/api/dsh/repos/:o/:r/hooks/:id/deliveries', async (c: Context) => {
+    const ar = authRepo(c); if (!ar) return;
+    const rows = db.db().prepare(
+      'SELECT id, event_type, is_delivered, is_succeed, response_content FROM hook_task WHERE hook_id = ? AND repo_id = ? ORDER BY id DESC LIMIT 10'
+    ).all(c.ParamsInt64(':id'), ar.repo.id) as any[];
+    c.JSONSuccess(rows.map((r) => {
+      let status = 0; let err = '';
+      try {
+        const rc = JSON.parse(r.response_content ?? '{}');
+        status = rc.status ?? 0;
+        err = rc.err ?? '';
+      } catch { /* ignore */ }
+      return { id: r.id, event: r.event_type, delivered: !!r.is_delivered, ok: !!r.is_succeed, status, err };
+    }));
   });
 }

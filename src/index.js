@@ -577,6 +577,7 @@ module.exports = {
                     const r = await kernelApi(cfg, actor, 'GET', `/repos/${owner}/${repo}/issues/${idx}/comments`)
                     sendJson(res, r.status, { ok: Array.isArray(r.json), comments: (Array.isArray(r.json) ? r.json : []).map((c) => ({
                       id: c.id, body: c.body, user: c.user && c.user.login, created: c.created_at,
+                      type: c.type || 0, commit_sha: c.commit_sha || '',
                     })) })
                     return
                   }
@@ -603,13 +604,23 @@ module.exports = {
                 sendJson(res, r.status === 201 ? 200 : r.status, r.status === 201 ? { ok: true } : { ok: false, error: errText(r) })
                 return
               }
+              // PATCH/DELETE /repos/:o/:r/issues/comments/:id — 评论编辑/删除
+              if ((req.method === 'PATCH' || req.method === 'DELETE') && parts[0] === 'repos' && parts[3] === 'issues' && parts[4] === 'comments' && parts[5]) {
+                const [, owner, repo, , , cid] = parts
+                const body = req.method === 'PATCH' ? JSON.parse((await readBody(req)) || '{}') : undefined
+                const r = await kernelApi(cfg, actor, req.method, `/repos/${owner}/${repo}/issues/comments/${cid}`, body)
+                sendJson(res, [200, 201, 204].includes(r.status) ? 200 : r.status,
+                  [200, 201, 204].includes(r.status) ? { ok: true } : { ok: false, error: errText(r) })
+                return
+              }
               // /dsh/*：宿主进程内直接执行内核 dshapi（省铸令牌+HTTP 跳转）。
               // 异常/未匹配路由回退到原来的 HTTP 转发，保证任何内核端点仍可到达。
               if (parts && parts[0] === 'dsh') {
                 try {
                   const token = await kernelTokenFor(cfg, actor)
                   const { dispatch } = require('./dsh-host')
-                  const handled = await dispatch(cfg, actor, req.method, rest, req, res, token)
+                  // rest 只是路径部分；进程内 dispatch 需要连同 query 一起（blame/tree 等带参端点）
+                  const handled = await dispatch(cfg, actor, req.method, rest + (url.search || ''), req, res, token)
                   if (handled) return
                 } catch (e) {
                   sendJson(res, 502, { ok: false, error: 'in-process dispatch failed: ' + String((e && e.message) || e) })

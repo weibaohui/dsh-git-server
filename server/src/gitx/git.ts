@@ -328,14 +328,15 @@ export async function lsTree(repoDir: string, treeRev: string, treePath: string)
 }
 
 async function lsTreeOnce(repoDir: string, rev: string, subPath: string): Promise<TreeEntries | null> {
-  const args = ['ls-tree', '-z', '--end-of-options', safeRev(rev)];
+  // -l: blob sizes come inline ("<mode> <type> <sha> <size>\t<name>"), saving a
+  // cat-file subprocess per file at every call site
+  const args = ['ls-tree', '-l', '-z', '--end-of-options', safeRev(rev)];
   if (subPath) args.push('--', subPath);
   const out = await gitOK(repoDir, ...args);
   if (!out) return null;
   const entries: TreeEntry[] = [];
   const records = out.toString('utf8').split('\0').filter(Boolean);
   for (const rec of records) {
-    // "<mode> <type> <sha>\t<name>"
     const tab = rec.indexOf('\t');
     if (tab < 0) continue;
     const meta = rec.slice(0, tab).split(/\s+/);
@@ -345,7 +346,7 @@ async function lsTreeOnce(repoDir: string, rev: string, subPath: string): Promis
       type: meta[1] as EntryType,
       sha: meta[2],
       name,
-      size: 0,
+      size: meta[3] && meta[3] !== '-' ? Number(meta[3]) || 0 : 0,
     });
   }
   return { entries, sha: rev };
@@ -354,6 +355,49 @@ async function lsTreeOnce(repoDir: string, rev: string, subPath: string): Promis
 export async function entrySize(repoDir: string, sha: string): Promise<number> {
   const out = await gitOK(repoDir, 'cat-file', '-s', sha);
   return out ? Number(out.toString().trim()) : 0;
+}
+
+export interface LastCommit {
+  sha: string;
+  msg: string;
+  date: number; // ms epoch
+  author: string;
+}
+
+/** Last commit touching each path, in ONE `git log` walk (first hit per path
+ * wins; -m --first-parent linearizes merges so a merge commit counts as the
+ * last change). Paths not resolved within the walk are simply absent — callers
+ * may fall back to a per-path `git log -1` for those (rare). */
+export async function lastCommitsForPaths(repoDir: string, rev: string, paths: string[], maxCount = 4000): Promise<Map<string, LastCommit>> {
+  const result = new Map<string, LastCommit>();
+  if (paths.length === 0) return result;
+  const out = await gitOK(
+    repoDir,
+    '-c', 'core.quotePath=false', 'log', '--first-parent', '-m', `--max-count=${maxCount}`,
+    '--pretty=tformat:%x01%h%x1f%s%x1f%ct%x1f%an', '--name-only', '--no-renames',
+    '--end-of-options', safeRev(rev), '--', ...paths
+  );
+  if (!out) return result;
+  let cur: { sha: string; msg: string; date: number; author: string } | null = null;
+  const pending = new Set(paths);
+  for (const line of out.toString('utf8').split('\n')) {
+    if (line.startsWith('\x01')) {
+      const [sha, msg, ct, author] = line.slice(1).split('\x1f');
+      cur = { sha: sha || '', msg: (msg || '').slice(0, 90), date: Number(ct) * 1000 || 0, author: author || '' };
+      continue;
+    }
+    const name = line.trim();
+    if (!name || !cur) continue;
+    // a name-only record may be the path itself or (for dir pathspecs) a file under it
+    for (const p of pending) {
+      if (name === p || name.startsWith(p + '/')) {
+        if (!result.has(p)) result.set(p, cur);
+        pending.delete(p);
+      }
+    }
+    if (pending.size === 0) break;
+  }
+  return result;
 }
 
 export async function blobBytes(repoDir: string, sha: string, maxBytes = 0): Promise<Buffer> {

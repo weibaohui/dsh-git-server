@@ -109,10 +109,11 @@ export async function initRepository(repo: db.Repository, opts: { autoInit?: boo
 function renderReadmeTemplate(name: string, repo: db.Repository): string {
   const tpl = readVendorTemplate('readme', name);
   if (!tpl) return `# ${repo.name}\n\n${repo.description ?? ''}\n`;
+  // vendored 模板用单花括号（{Name}），上游 gogs 用双花括号（{{Name}}）——两种都替换
   return tpl
-    .replace(/\{\{Filename\}\}/g, 'README.md')
-    .replace(/\{\{Description\}\}/g, repo.description ?? '')
-    .replace(/\{\{Name\}\}/g, repo.name);
+    .replace(/\{\{?\s*Filename\s*\}?\}/g, 'README.md')
+    .replace(/\{\{?\s*Description\s*\}?\}/g, repo.description ?? '')
+    .replace(/\{\{?\s*Name\s*\}?\}/g, repo.name);
 }
 
 export function readVendorTemplate(kind: 'gitignore' | 'license' | 'readme' | 'label', name: string): string | null {

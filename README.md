@@ -10,7 +10,9 @@
 ## 核心功能
 
 - **完整自助 Git 服务**：HTTP clone/push 开箱即用，仓库/工单/PR/wiki/发版/标签/里程碑一条龙，崩溃自动拉起
-- **dsh 原生管理页**：侧栏底部「Git」进全屏页——建仓/删仓/克隆地址，仓库浏览多标签（文件树+内容、提交历史、分支、工单、PR、Wiki、发版、标签、里程碑、设置）；React + dsh 主题（亮暗自动跟随）、zh/en 双语
+- **dsh 原生管理页**：侧栏底部「Git」进全屏页——建仓（或从 URL 导入/镜像）删仓/克隆地址，仓库浏览多标签（文件树+语法高亮、提交历史、分支、工单、PR、Wiki、发版、标签、里程碑、设置）；React + dsh 主题（亮暗自动跟随）、zh/en 双语
+- **协作闭环**：通知中心（评论/指派/@提及未读 + 侧栏角标）、跨仓库「我的工单/PR」聚合、PR 评审（通过/请求修改）、`fixes #N` push 自动关单、提交与工单互相跳转
+- **工程能力**：分支保护（禁删/禁强推）、协作者只读/可写/管理三档、发版二进制附件、仓库内代码搜索、webhook 测试投递与投递记录、文件永久链接深链
 - **账号打通**：账户来源 = [user-management](https://github.com/weibaohui/user-management)（必装）——git 凭据与页面登录均走 user-management 校验，免另记一套账号；网页注册关闭，账号只由 dsh 管理
 - **一键启停**：启用/停用/端口/数据目录全在设置页，改完即生效
 - **局域网 git**：默认监听 `0.0.0.0`，局域网内机器可直接 `git clone/push`
@@ -50,7 +52,73 @@ dsh plugin --profile web add @weibaohui/dsh-git-server -w
 
 | 插件版本 | 适配 dsh 版本 | 备注 |
 |---------|--------------|------|
-| 0.1.4 | 0.1.7-rc.2 | 当前版本，已在 @deepseek-ai/dsh@0.1.7-rc.2 下验证运行 |
+| 0.2.0 | 0.1.7-rc.2 | 当前版本，已在 @deepseek-ai/dsh@0.1.7-rc.2 下验证运行 |
+| 0.1.4 | 0.1.7-rc.2 | 已在 @deepseek-ai/dsh@0.1.7-rc.2 下验证运行 |
 | 0.1.3 | 0.1.7-rc.2 | 已在 @deepseek-ai/dsh@0.1.7-rc.2 下验证运行 |
 
 > **发版约定**：每次发布新版本时，请在上表追加一行，记录该插件版本实际验证所用的 `@deepseek-ai/dsh` 版本。`package.json` 的 `engines.dsh` 声明最低支持版本；本表记录实际验证版本，二者配合使用。
+
+## 功能巡览
+
+<video src="docs/feature-tour.webm" controls muted playsinline width="100%"></video>
+
+<details>
+<summary><b>逐页截图（点击展开）</b></summary>
+
+### 主页
+
+| 仓库列表 | 从 URL 导入/镜像 |
+|---|---|
+| ![主页](docs/home.png) | ![导入](docs/import-repo.png) |
+
+### 代码浏览
+
+| 文件树+README | 语法高亮 | Blame | 文件历史 | 空仓库推送引导 |
+|---|---|---|---|---|
+| ![文件树](docs/repo-files.png) | ![高亮](docs/file-highlight.png) | ![blame](docs/blame.png) | ![历史](docs/file-history.png) | ![空仓库](docs/empty-repo-guide.png) |
+
+| 提交历史 | 提交 diff | 仓库内代码搜索 |
+|---|---|---|
+| ![提交](docs/commits.png) | ![diff](docs/commit-diff.png) | ![搜索](docs/code-search.png) |
+
+| 分支概况 | 分支与标签 |
+|---|---|
+| ![分支](docs/branches.png) | ![分支标签](docs/branches-all.png) |
+
+### 工单 / PR / 协作
+
+| 工单列表 | 工单详情 | 新工单 |
+|---|---|---|
+| ![工单](docs/issues.png) | ![工单详情](docs/issue-detail.png) | ![新工单](docs/new-issue.png) |
+
+| 标签管理 | 里程碑 | PR 列表 |
+|---|---|---|
+| ![标签](docs/labels.png) | ![里程碑](docs/milestones.png) | ![PR](docs/pulls.png) |
+
+| PR 评审与合并 | 已合并 PR（评审记录） |
+|---|---|
+| ![PR评审](docs/pr-open.png) | ![PR已合并](docs/pr-merged.png) |
+
+| 通知中心 | 我的工单聚合 | 星标/复刻弹层 |
+|---|---|---|
+| ![通知](docs/notifications.png) | ![我的工单](docs/my-issues.png) | ![星标](docs/star-popup.png) |
+
+### Wiki / 发版
+
+| Wiki 页面 | 发版（含二进制附件） |
+|---|---|
+| ![wiki](docs/wiki.png) | ![发版](docs/releases.png) |
+
+### 仓库设置
+
+| 协作者（三档权限） | 分支保护 | Webhook 与投递记录 | 镜像同步 | 危险区域 |
+|---|---|---|---|---|
+| ![协作者](docs/settings-collaborators.png) | ![分支保护](docs/settings-branch-protection.png) | ![webhook](docs/settings-webhooks.png) | ![镜像](docs/settings-mirror.png) | ![危险区域](docs/settings-danger.png) |
+
+### 全局页面
+
+| 探索 | 组织 | 用户主页 | 管理面板 |
+|---|---|---|---|
+| ![探索](docs/explore.png) | ![组织](docs/org.png) | ![用户](docs/profile.png) | ![管理](docs/admin.png) |
+
+</details>

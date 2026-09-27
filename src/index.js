@@ -56,7 +56,7 @@ function loadSchemaSync() {
 let __schemaOverride = null
 function __seedSchema(Schema) {
   __schemaOverride = Schema
-  Config = settingsSchema(Schema)
+  Config = settingsSchema(Schema) ?? undefined
   module.exports.Config = Config
 }
 
@@ -80,15 +80,17 @@ function settingsSchema(S) {
 }
 
 // 0.1.7 settings 服务自动发现模块导出的 Config（entry.fiber.runtime.Config）。
+// 导出值必须是 undefined 而非 null：宿主 settings 的 schema() 只排除 undefined，
+// "toJSON" in null 会抛 TypeError 逃出 describe()，拖垮整份设置文档（同 dsh-continue#4）。
 const Schema = __schemaOverride || loadSchemaSync()
-let Config = settingsSchema(Schema)
+let Config = settingsSchema(Schema) ?? undefined
 
 // ── 插件 ─────────────────────────────────────────────────────────────────
 
 module.exports = {
   name,
   inject,
-  Config,
+  Config: Config ?? undefined,
   version: '0.1.0',
   __internals: { settingsSchema, loadSchemaSync, resolveSchema, __seedSchema, API_PREFIX, SETTINGS_NS },
 

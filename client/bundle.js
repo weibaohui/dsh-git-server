@@ -218,18 +218,24 @@ window.__ModuleLoader__.load({
     .dgs-md blockquote{border-left:3px solid var(--dsw-alias-border-l2);margin:8px 0;padding:2px 12px;color:var(--dsw-alias-label-secondary)}
     .dgs-md table{border-collapse:collapse}
     .dgs-md td,.dgs-md th{border:1px solid var(--dsw-alias-border-l2);padding:4px 10px}
-    /* 语法高亮（亮暗双主题可读配色） */
+    /* 语法高亮（亮暗双主题可读配色）：暗色跟随 dsh UI 主题（官方 body[data-ds-dark-theme]
+       属性），切主题即时生效；系统偏好仅对未发布主题属性的老版本宿主兜底 */
     .tok-k{color:#cf222e;font-weight:500}
     .tok-s{color:#1a7f37}
     .tok-c{color:#6e7781;font-style:italic}
     .tok-n{color:#0550ae}
     .tok-b{color:#953800}
+    body[data-ds-dark-theme] .tok-k{color:#ff7b72}
+    body[data-ds-dark-theme] .tok-s{color:#7ee787}
+    body[data-ds-dark-theme] .tok-c{color:#8b949e}
+    body[data-ds-dark-theme] .tok-n{color:#79c0ff}
+    body[data-ds-dark-theme] .tok-b{color:#ffa657}
     @media (prefers-color-scheme: dark){
-    .tok-k{color:#ff7b72}
-    .tok-s{color:#7ee787}
-    .tok-c{color:#8b949e}
-    .tok-n{color:#79c0ff}
-    .tok-b{color:#ffa657}
+    html:not([data-ds-theme-source]) .tok-k{color:#ff7b72}
+    html:not([data-ds-theme-source]) .tok-s{color:#7ee787}
+    html:not([data-ds-theme-source]) .tok-c{color:#8b949e}
+    html:not([data-ds-theme-source]) .tok-n{color:#79c0ff}
+    html:not([data-ds-theme-source]) .tok-b{color:#ffa657}
     }
     .dgs-hit{padding:4px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);cursor:pointer}
     .dgs-hit:hover{background:var(--dsw-alias-interactive-bg-hover)}

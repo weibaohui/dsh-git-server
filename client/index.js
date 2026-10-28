@@ -238,7 +238,14 @@ html:not([data-ds-theme-source]) .tok-b{color:#ffa657}
 
 // ── data helpers ──────────────────────────────────────────────────────────
 
-const API = '/dsh-git-server/api'
+// API 基址随页面走：子路径反代（如 https://host/app/dsh/）下，绝对路径 /dsh-git-server/api
+// 会打到站点根而 404。与宿主官方客户端一致，用 document.baseURI 推导（dsh-sync#14 同款）。
+const API = (() => {
+  try {
+    const base = (typeof document !== 'undefined' && document.baseURI) || (typeof location !== 'undefined' ? location.href : '/')
+    return new URL('dsh-git-server/api', new URL('.', base)).pathname.replace(/\/+$/, '')
+  } catch { return '/dsh-git-server/api' }
+})()
 async function api(method, path, body) {
   const res = await fetch(API + path, {
     method,
